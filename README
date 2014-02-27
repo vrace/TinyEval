@@ -1,0 +1,14 @@
+WANE'S Tiny Evaluator
+
+WANE's Tiny Evaluator is a tiny yet very useful library served as an inplace
+evaluator. It accepts a limited subset of the Scheme language.
+
+Main features of the library are:
+- Tiny code base
+- Easy integrate with C
+
+The files are organized with Visual Studio 2005. However, the files are simple
+enough that everyone can reconstruct a project/makefile without any problem.
+
+wane (newsheep@gmail.com)
+
