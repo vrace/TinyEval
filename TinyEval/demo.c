@@ -16,11 +16,7 @@ te_object* plus(tiny_eval *te, void *user, te_object *operands[], int count)
 	{
 		assert(operands && operands[i]);
 		type = te_object_type(operands[i]);
-		if (type == TE_TYPE_INTEGER)
-		{
-			result += te_to_integer(operands[i]);
-		}
-		else if (type == TE_TYPE_NUMBER)
+		if (type == TE_TYPE_INTEGER || type == TE_TYPE_NUMBER)
 		{
 			result += te_to_number(operands[i]);
 		}
@@ -46,11 +42,7 @@ te_object* multiplies(tiny_eval *te, void *user, te_object *operands[], int coun
 
 		assert(operands && operands[i]);
 		type = te_object_type(operands[i]);
-		if (type == TE_TYPE_INTEGER)
-		{
-			operand = te_to_integer(operands[i]);
-		}
-		else if (type == TE_TYPE_NUMBER)
+		if (type == TE_TYPE_INTEGER || type == TE_TYPE_NUMBER)
 		{
 			operand = te_to_number(operands[i]);
 		}

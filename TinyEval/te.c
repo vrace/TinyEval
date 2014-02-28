@@ -281,13 +281,19 @@ long te_to_integer(te_object *object)
 
 double te_to_number(te_object *object)
 {
+	te_type type;
 	double number = 0;
 
 	assert(object);
+	type = te_object_type(object);
 
-	if (te_object_type(object) == TE_TYPE_NUMBER)
+	if (type == TE_TYPE_NUMBER)
 	{
 		number = object->data.num_value;
+	}
+	else if (type == TE_TYPE_INTEGER)
+	{
+		number = object->data.int_value;
 	}
 
 	return number;
@@ -345,12 +351,14 @@ void te_release(tiny_eval *te)
 			free(s);
 		}
 	}
+
+	free(te);
 }
 
 unsigned te_symbol_hash(const char *name)
 {
 	unsigned hash;
-	for (hash = 0; *name; hash = hash * 131 + *name++);
+	for (hash = 0; *name; hash = hash * 131 + tolower(*name++));
 	return hash % TE_SYMBOL_KEY;
 }
 
@@ -459,7 +467,7 @@ te_object* te_eval(tiny_eval *te, const char *expression)
 	{
 		te_object_release(result);
 		result = eval(te, exp);
-		for (; *(*exp) && !te_is_space(*(*exp)); (*exp)++);
+		for (; *(*exp) && te_is_space(*(*exp)); (*exp)++);
 	}
 
 	return result;
@@ -604,6 +612,11 @@ te_object* eval(tiny_eval *te, const char **exp)
 
 		*exp = ++p;
 	}
+	else if (*p == ')')
+	{
+		te_set_error(te, "eval: unexpected close parenthesis");
+		p++;
+	}
 	else
 	{
 		te_symbol *s;
@@ -616,19 +629,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 		memcpy(field, *exp, length);
 		field[length] = '\0';
 
-		s = te_symbol_find(te, field);
-		if (s)
-		{
-			if (!s->object)
-			{
-				te_set_error(te, "eval: unbound symbol");
-			}
-			else
-			{
-				result = te_object_clone(s->object);
-			}
-		}
-		else if (strchr(field, '.'))
+		if (strchr(field, '.'))
 		{
 			double num;
 			char *ep;
@@ -640,7 +641,18 @@ te_object* eval(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				te_set_error(te, "eval: bad number");
+				s = te_symbol_find(te, field);
+				if (s)
+				{
+					if (!s->object)
+					{
+						te_set_error(te, "eval: unbound symbol");
+					}
+					else
+					{
+						result = te_object_clone(s->object);
+					}
+				}
 			}
 		}
 		else
@@ -655,7 +667,18 @@ te_object* eval(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				te_set_error(te, "eval: bad integer");
+				s = te_symbol_find(te, field);
+				if (s)
+				{
+					if (!s->object)
+					{
+						te_set_error(te, "eval: unbound symbol");
+					}
+					else
+					{
+						result = te_object_clone(s->object);
+					}
+				}
 			}
 		}
 
