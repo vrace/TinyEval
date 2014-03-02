@@ -34,12 +34,16 @@ wane <newsheep@gmail.com>
 
 #include "te.h"
 
-#define TE_SYMBOL_KEY 256
-
 struct tag_tiny_eval
 {
-	struct tag_te_symbol *symbols[TE_SYMBOL_KEY];
 	char *error;
+
+	struct tag_te_symbol **env;
+	int env_count;
+
+	struct tag_te_symbol **symbol;
+	int symbol_count;
+	int symbol_cap;
 };
 
 struct tag_te_object
@@ -58,7 +62,6 @@ struct tag_te_object
 
 struct tag_te_proc_data
 {
-	tiny_eval *te;
 	te_procedure proc;
 	void *user;
 };
@@ -67,14 +70,22 @@ struct tag_te_symbol
 {
 	char *name;
 	te_object *object;
-	struct tag_te_symbol *link;
 };
 
-typedef struct tag_te_proc_data te_proc_data;
+struct tag_te_lambda_data
+{
+	char **binding;
+	int binding_count;
+	char *combination;
+};
+
 typedef struct tag_te_symbol te_symbol;
+typedef struct tag_te_proc_data te_proc_data;
+typedef struct tag_te_lambda_data te_lambda_data;
 
 static te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count);
 static te_object* eval(tiny_eval *te, const char **exp);
+static te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count);
 
 te_type te_object_type(te_object *object)
 {
@@ -88,11 +99,43 @@ te_object* te_object_clone(te_object *object)
 
 	if (type == TE_TYPE_PROCEDURE)
 	{
+		void *user = object->data.procedure->user;
+
 		assert(object->data.procedure);
-		out = te_make_procedure(
-			object->data.procedure->te,
-			object->data.procedure->proc,
-			object->data.procedure->user);
+
+		if (object->data.procedure->proc == te_lambda_proc)
+		{
+			int i;
+			size_t length;
+			te_lambda_data *lambda;
+			te_lambda_data *out;
+
+			lambda = object->data.procedure->user;
+			assert(lambda);
+
+			out = malloc(sizeof(te_lambda_data));
+			assert(out);
+
+			out->binding_count = lambda->binding_count;
+			out->binding = malloc(sizeof(char*) * lambda->binding_count);
+
+			for (i = 0; i < lambda->binding_count; i++)
+			{
+				length = strlen(lambda->binding[i]) + 1;
+				out->binding[i] = malloc(length);
+				assert(out->binding[i]);
+				memcpy(out->binding[i], lambda->binding[i], length);
+			}
+
+			length = strlen(lambda->combination) + 1;
+			out->combination = malloc(length);
+			assert(out->combination);
+			memcpy(out->combination, lambda->combination, length);
+
+			user = out;
+		}
+
+		out = te_make_procedure(object->data.procedure->proc, user);
 	}
 	else if (type == TE_TYPE_USERDATA)
 	{
@@ -131,6 +174,21 @@ void te_object_release(te_object *object)
 		if (type == TE_TYPE_PROCEDURE)
 		{
 			assert(object->data.procedure);
+
+			if (object->data.procedure->proc == te_lambda_proc)
+			{
+				int i;
+				te_lambda_data *lambda = object->data.procedure->user;
+				
+				assert(lambda);
+
+				for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
+				free(lambda->binding);
+				free(lambda->combination);
+
+				free(lambda);
+			}
+
 			free(object->data.procedure);
 		}
 		else if (type == TE_TYPE_STRING)
@@ -155,11 +213,10 @@ te_object* te_make_nil(void)
 	return out;
 }
 
-te_object* te_make_procedure(tiny_eval *te, te_procedure proc, void *user)
+te_object* te_make_procedure(te_procedure proc, void *user)
 {
 	te_object *out;
 
-	assert(te);
 	assert(proc);
 
 	out = malloc(sizeof(te_object));
@@ -168,7 +225,6 @@ te_object* te_make_procedure(tiny_eval *te, te_procedure proc, void *user)
 	out->type = TE_TYPE_PROCEDURE;
 	out->data.procedure = malloc(sizeof(te_proc_data));
 	assert(out->data.procedure);
-	out->data.procedure->te = te;
 	out->data.procedure->proc = proc;
 	out->data.procedure->user = user;
 
@@ -234,7 +290,7 @@ te_object* te_make_string(const char *str, const char *end)
 	return out;
 }
 
-te_object* te_call(te_object *procedure, te_object *operands[], int count)
+te_object* te_call(tiny_eval *te, te_object *procedure, te_object *operands[], int count)
 {
 	te_object *result = NULL;
 
@@ -243,7 +299,7 @@ te_object* te_call(te_object *procedure, te_object *operands[], int count)
 	if (te_object_type(procedure) == TE_TYPE_PROCEDURE)
 	{
 		result = procedure->data.procedure->proc(
-			procedure->data.procedure->te,
+			te,
 			procedure->data.procedure->user,
 			operands, count);
 	}
@@ -316,13 +372,16 @@ const char* te_to_string(te_object *object)
 tiny_eval* te_init(void)
 {
 	tiny_eval *te;
-	int i;
 
 	te = malloc(sizeof(tiny_eval));
 	assert(te);
 
 	te->error = NULL;
-	for (i = 0; i < TE_SYMBOL_KEY; te->symbols[i++] = NULL);
+	te->env = NULL;
+	te->env_count = 0;
+	te->symbol = NULL;
+	te->symbol_cap = 0;
+	te->symbol_count = 0;
 
 	return te;
 }
@@ -330,56 +389,90 @@ tiny_eval* te_init(void)
 void te_release(tiny_eval *te)
 {
 	int i;
-	te_symbol *s;
 
 	assert(te);
 
 	if (te->error)
 		free(te->error);
 
-	for (i = 0; i < TE_SYMBOL_KEY; i++)
+	for (i = 0; i < te->symbol_count; i++)
 	{
-		while (te->symbols[i])
-		{
-			s = te->symbols[i];
-			te->symbols[i] = s->link;
-			
-			assert(s->name);
-			free(s->name);
+		assert(te->symbol[i]->name);
+		free(te->symbol[i]->name);
 
-			te_object_release(s->object);
-			free(s);
-		}
+		te_object_release(te->symbol[i]->object);
+		free(te->symbol[i]);
 	}
 
 	free(te);
 }
 
-unsigned te_symbol_hash(const char *name)
+tiny_eval* te_inherit(tiny_eval *ancestor)
 {
-	unsigned hash;
-	for (hash = 0; *name; hash = hash * 131 + tolower(*name++));
-	return hash % TE_SYMBOL_KEY;
+	tiny_eval *te;
+	int i;
+
+	assert(ancestor);
+
+	te = malloc(sizeof(tiny_eval));
+	assert(te);
+
+	te->error = NULL;
+
+	te->symbol = NULL;
+	te->symbol_cap = 0;
+	te->symbol_count = 0;
+
+	te->env_count = ancestor->env_count + ancestor->symbol_count;
+	te->env = malloc(sizeof(te_symbol*) * te->env_count);
+
+	for (i = 0; i < ancestor->symbol_count; i++)
+		te->env[i] = ancestor->symbol[i];
+
+	for (i = 0; i < ancestor->env_count; i++)
+		te->env[i + ancestor->symbol_count] = ancestor->env[i];
+
+	return te;
 }
 
 te_symbol* te_symbol_find(tiny_eval *te, const char *name)
 {
-	unsigned hash;
+	int i;
 	te_symbol *out;
 
 	assert(te);
 	assert(name);
 
-	hash = te_symbol_hash(name);
-	out = te->symbols[hash];
-	if (out)
+	out = NULL;
+	for (i = 0; i < te->symbol_count; i++)
 	{
-		while (out)
+		assert(te->symbol[i]->name);
+		if (_stricmp(name, te->symbol[i]->name) == 0)
 		{
-			assert(out->name);
-			if (_stricmp(out->name, name) == 0)
-				break;
-			out = out->link;
+			out = te->symbol[i];
+			break;
+		}
+	}
+
+	return out;
+}
+
+te_symbol* te_env_find(tiny_eval *te, const char *name)
+{
+	int i;
+	te_symbol *out;
+
+	assert(te);
+	assert(name);
+
+	out = NULL;
+	for (i = 0; i < te->env_count; i++)
+	{
+		assert(te->env[i]->name);
+		if (_stricmp(name, te->env[i]->name) == 0)
+		{
+			out = te->env[i];
+			break;
 		}
 	}
 
@@ -401,7 +494,6 @@ te_symbol* te_symbol_init(const char *name, te_object *object)
 	memcpy(s->name, name, length);
 
 	s->object = object;
-	s->link = NULL;
 
 	return s;
 }
@@ -409,7 +501,6 @@ te_symbol* te_symbol_init(const char *name, te_object *object)
 void te_define(tiny_eval *te, const char *symbol, te_object *object)
 {
 	te_symbol *s;
-	unsigned hash;
 
 	assert(te);
 	assert(symbol);
@@ -422,17 +513,13 @@ void te_define(tiny_eval *te, const char *symbol, te_object *object)
 	}
 	else
 	{
-		hash = te_symbol_hash(symbol);
-		s = te->symbols[hash];
-		if (s)
+		if (te->symbol_count >= te->symbol_cap)
 		{
-			for (; s->link; s = s->link);
-			s->link = te_symbol_init(symbol, object);
+			te->symbol_cap += 100;
+			te->symbol = realloc(te->symbol, sizeof(te_symbol*) * te->symbol_cap);
 		}
-		else
-		{
-			te->symbols[hash] = te_symbol_init(symbol, object);
-		}
+
+		te->symbol[te->symbol_count++] = te_symbol_init(symbol, object);
 	}
 }
 
@@ -502,17 +589,20 @@ te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count
 {
 	te_object *result;
 	te_symbol *s;
-
+ 
 	assert(te);
 	assert(op);
 
 	result = NULL;
 	s = te_symbol_find(te, op);
+	if (!s)
+		s = te_env_find(te, op);
+
 	if (s)
 	{
 		if (te_object_type(s->object) == TE_TYPE_PROCEDURE)
 		{
-			result = te_call(s->object, operands, count);
+			result = te_call(te, s->object, operands, count);
 		}
 		else
 		{
@@ -523,6 +613,241 @@ te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count
 	{
 		te_set_error(te, "apply: unbound procedure");
 	}
+
+	return result;
+}
+
+te_object* te_define_lambda(tiny_eval *te, const char **exp)
+{
+	int i;
+	te_object *out = NULL;
+	te_lambda_data *lambda;
+	const char *p = *exp;
+
+	assert(te);
+	assert(exp);
+
+	if (*p == '(')
+	{
+		lambda = malloc(sizeof(te_lambda_data));
+		assert(lambda);
+
+		lambda->binding = NULL;
+		lambda->binding_count = 0;
+		lambda->combination = NULL;
+
+		for (p++; *p && te_is_space(*p); p++);
+		if (!*p)
+		{
+			te_set_error(te, "lambda: unexpected end of expression");
+		}
+		else
+		{
+			char *field;
+			size_t length;
+			int binding_cap = 0;
+
+			for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
+
+			length = p - *exp;
+			field = malloc(length + 1);
+			assert(field);
+			memcpy(field, *exp, length);
+			field[length] = 0;
+
+			while (*p != ')')
+			{
+				for (; *p && te_is_space(*p) && *p != ')'; p++);
+				for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
+
+				if (!*p)
+				{
+					te_set_error(te, "lambda: unexpected end of expression");
+					break;
+				}
+				
+				if (lambda->binding_count >= binding_cap)
+				{
+					binding_cap += 8;
+					lambda->binding = realloc(lambda->binding, sizeof(char*) * binding_cap);
+					assert(lambda->binding);
+				}
+
+				i = lambda->binding_count++;
+				length = p - *exp;
+				lambda->binding[i] = malloc(length + 1);
+				memcpy(lambda->binding[i], *exp, length);
+				lambda->binding[i][length] = 0;
+
+				for (; *p && te_is_space(*p) && *p != ')'; p++);
+			}
+
+			if (!te_error(te))
+			{
+				for (p++; *p && te_is_space(*p); p++);
+				*exp = p;
+				
+				if (*p == '(')
+				{
+					int bracket = 1;
+					p++;
+					while (*p && bracket != 0)
+					{
+						if (*p == '(')
+							bracket++;
+						else if (*p == ')')
+							bracket--;
+						p++;
+					}
+
+					length = p - *exp;
+					lambda->combination = malloc(length + 1);
+					assert(lambda->combination);
+					memcpy(lambda->combination, *exp, length);
+					lambda->combination[length] = 0;
+
+					out = te_make_procedure(te_lambda_proc, lambda);
+					te_define(te, field, te_object_clone(out));
+				}
+				else
+				{
+					te_set_error(te, "lambda: no expression");
+				}
+			}
+
+			free(field);
+			*exp = ++p;
+		}
+
+		if (te_error(te))
+		{
+			for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
+			free(lambda->binding);
+
+			if (lambda->combination)
+				free(lambda->combination);
+		}
+	}
+	else
+	{
+		te_set_error(te, "lambda: not a lambda");
+	}
+
+	return out;
+}
+
+te_object* te_define_symbol(tiny_eval *te, const char **exp)
+{
+	char *field = NULL;
+	char *value = NULL;
+	const char *p;
+	size_t length;
+	te_object *result = NULL;
+
+	for (p = *exp; *p && !te_is_space(*p) && *p != '(' && *p != ')' && *p != '"'; p++);
+
+	length = p - *exp;
+	if (length == 0)
+	{
+		te_set_error(te, "define: no symbol");
+	}
+	else
+	{
+		field = malloc(length + 1);
+		assert(field);
+		memcpy(field, *exp, length);
+		field[length] = '\0';
+
+		for (*exp = p; *p && te_is_space(*p); p++);
+
+		if (*p == '(')
+		{
+			int bracket = 1;
+
+			for (*exp = p++; *p && bracket != 0; p++)
+			{
+				if (*p == '(')
+					bracket++;
+				else if (*p == ')')
+					bracket--;
+			}
+
+			if (bracket != 0)
+			{
+				te_set_error(te, "define: mismatch bracket");
+			}
+			else
+			{
+				length = p - *exp;
+				value = malloc(length + 1);
+				assert(value);
+				memcpy(value, *exp, length);
+				value[length] = '\0';
+			}
+		}
+		else if (*p == '"')
+		{
+			for (*exp = p++; *p && *p != '"'; p++);
+
+			if (*p != '"')
+			{
+				te_set_error(te, "define: unexpected end of string");
+			}
+			else
+			{
+				length = ++p - *exp;
+				value = malloc(length + 1);
+				assert(value);
+				memcpy(value, *exp, length);
+				value[length] = '\0';
+			}
+		}
+		else
+		{
+			for (; *p && te_is_space(*p) && *p != ')'; p++);
+			for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
+
+			length = p - *exp;
+			if (length == 0)
+			{
+				te_set_error(te, "define: nothing to assign");
+			}
+			else
+			{
+				value = malloc(length + 1);
+				assert(value);
+				memcpy(value, *exp, length);
+				value[length] = '\0';
+			}
+		}
+	}
+
+	if (!te_error(te))
+	{
+		assert(field);
+		assert(value);
+
+		if (!*p)
+		{
+			te_set_error(te, "define: unexpected end of expression");
+		}
+		else
+		{
+			*exp = ++p;
+			result = te_eval(te, value);
+			
+			if (!te_error(te))
+			{
+				te_define(te, field, te_object_clone(result));
+			}
+		}
+	}
+
+	if (field)
+		free(field);
+
+	if (value)
+		free(value);
 
 	return result;
 }
@@ -550,35 +875,53 @@ te_object* eval(tiny_eval *te, const char **exp)
 		memcpy(field, *exp, length);
 		field[length] = '\0';
 
-		while (*p != ')' && !te_error(te))
+		if (_stricmp(field, "define") == 0)
 		{
-			te_object *operand = eval(te, &p);
-
-			if (te_error(te))
-				break;
-
-			if (operand_count >= operand_cap)
+			for (; *p && te_is_space(*p); p++);
+			
+			if (*p == '(')
 			{
-				operand_cap += 32;
-				operands = realloc(operands, sizeof(te_object*) * operand_cap);
+				result = te_define_lambda(te, &p);
 			}
-
-			operands[operand_count++] = operand;
-		}
-
-		if (*p != ')')
-		{
-			if (!te_error(te))
-				te_set_error(te, "eval: unexpected end of expression");
+			else
+			{
+				result = te_define_symbol(te, &p);
+			}
 
 			*exp = p;
 		}
 		else
 		{
-			if (!te_error(te))
-				result = apply(te, field, operands, operand_count);
+			while (*p != ')' && !te_error(te))
+			{
+				te_object *operand = eval(te, &p);
 
-			*exp = ++p;
+				if (te_error(te))
+					break;
+
+				if (operand_count >= operand_cap)
+				{
+					operand_cap += 32;
+					operands = realloc(operands, sizeof(te_object*) * operand_cap);
+				}
+
+				operands[operand_count++] = operand;
+			}
+
+			if (*p != ')')
+			{
+				if (!te_error(te))
+					te_set_error(te, "eval: unexpected end of expression");
+
+				*exp = p;
+			}
+			else
+			{
+				if (!te_error(te))
+					result = apply(te, field, operands, operand_count);
+
+				*exp = ++p;
+			}
 		}
 
 		for (operand_cap = 0; operand_cap < operand_count; te_object_release(operands[operand_cap++]));
@@ -642,16 +985,16 @@ te_object* eval(tiny_eval *te, const char **exp)
 			else
 			{
 				s = te_symbol_find(te, field);
-				if (s)
+				if (!s)
+					s = te_env_find(te, field);
+
+				if (!s || !s->object)
 				{
-					if (!s->object)
-					{
-						te_set_error(te, "eval: unbound symbol");
-					}
-					else
-					{
-						result = te_object_clone(s->object);
-					}
+					te_set_error(te, "eval: unbound symbol");
+				}
+				else
+				{
+					result = te_object_clone(s->object);
 				}
 			}
 		}
@@ -668,16 +1011,16 @@ te_object* eval(tiny_eval *te, const char **exp)
 			else
 			{
 				s = te_symbol_find(te, field);
-				if (s)
+				if (!s)
+					s = te_env_find(te, field);
+
+				if (!s || !s->object)
 				{
-					if (!s->object)
-					{
-						te_set_error(te, "eval: unbound symbol");
-					}
-					else
-					{
-						result = te_object_clone(s->object);
-					}
+					te_set_error(te, "eval: unbound symbol");
+				}
+				else
+				{
+					result = te_object_clone(s->object);
 				}
 			}
 		}
@@ -687,6 +1030,40 @@ te_object* eval(tiny_eval *te, const char **exp)
 
 	if (field)
 		free(field);
+
+	return result;
+}
+
+te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	int i;
+	tiny_eval *frame;
+	te_lambda_data *lambda;
+	te_object *result = NULL;
+
+	assert(te);
+	assert(user);
+
+	lambda = user;
+
+	if (lambda->binding_count == count)
+	{
+		frame = te_inherit(te);
+
+		for (i = 0; i < count; i++)
+			te_define(frame, lambda->binding[i], te_object_clone(operands[i]));
+
+		result = te_eval(frame, lambda->combination);
+
+		if (te_error(frame))
+			te_set_error(te, te_error(frame));
+
+		te_release(frame);
+	}
+	else
+	{
+		te_set_error(te, "lambda: mismatch operand count");
+	}
 
 	return result;
 }

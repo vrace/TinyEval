@@ -4,7 +4,10 @@
 
 #include "te.h"
 
+static char expression[] = "(define (square x) (* x x)) (define A 4) (+ 1 (* 2 3) (square A))";
+/*
 static char expression[] = "(+ 1 (* 2 3) 4 A)";
+*/
 
 te_object* plus(tiny_eval *te, void *user, te_object *operands[], int count)
 {
@@ -71,8 +74,8 @@ int main(void)
 	te_object *result;
 
 	te = te_init();
-	te_define(te, "+", te_make_procedure(te, plus, NULL));
-	te_define(te, "*", te_make_procedure(te, multiplies, NULL));
+	te_define(te, "+", te_make_procedure(plus, NULL));
+	te_define(te, "*", te_make_procedure(multiplies, NULL));
 	te_define(te, "A", te_make_integer(5));
 
 	result = te_eval(te, expression);

@@ -56,13 +56,13 @@ void te_object_release(te_object *object);
 typedef te_object* (*te_procedure)(tiny_eval *te, void *user, te_object *operands[], int count);
 
 te_object* te_make_nil(void);
-te_object* te_make_procedure(tiny_eval *te, te_procedure proc, void *user);
+te_object* te_make_procedure(te_procedure proc, void *user);
 te_object* te_make_userdata(void *user);
 te_object* te_make_integer(long value);
 te_object* te_make_number(double number);
 te_object* te_make_string(const char *str, const char *end);
 
-te_object* te_call(te_object *procedure, te_object *operands[], int count);
+te_object* te_call(tiny_eval *te, te_object *procedure, te_object *operands[], int count);
 void* te_to_userdata(te_object *object);
 long te_to_integer(te_object *object);
 double te_to_number(te_object *object);
