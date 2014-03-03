@@ -48,6 +48,7 @@ struct tag_tiny_eval
 
 struct tag_te_object
 {
+	int ref;
 	te_type type;
 	union
 	{
@@ -87,6 +88,31 @@ static te_object* apply(tiny_eval *te, const char *op, te_object *operands[], in
 static te_object* eval(tiny_eval *te, const char **exp);
 static te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count);
 
+char* te_str_extract(const char *begin, const char *end)
+{
+	char *str;
+	size_t length;
+
+	assert(begin);
+	assert(end);
+	assert(end >= begin);
+
+	length = end - begin;
+	str = malloc(length + 1);
+	assert(str);
+
+	memcpy(str, begin, length);
+	str[length] = '\0';
+
+	return str;
+}
+
+char* te_str_copy(const char *str)
+{
+	assert(str);
+	return te_str_extract(str, str + strlen(str));
+}
+
 te_type te_object_type(te_object *object)
 {
 	return object ? object->type : TE_TYPE_NIL;
@@ -97,7 +123,11 @@ te_object* te_object_clone(te_object *object)
 	te_object *out = NULL;
 	te_type type = te_object_type(object);
 
-	if (type == TE_TYPE_PROCEDURE)
+	if (type == TE_TYPE_NIL && object)
+	{
+		return te_make_nil();
+	}
+	else if (type == TE_TYPE_PROCEDURE)
 	{
 		void *user = object->data.procedure->user;
 
@@ -106,7 +136,6 @@ te_object* te_object_clone(te_object *object)
 		if (object->data.procedure->proc == te_lambda_proc)
 		{
 			int i;
-			size_t length;
 			te_lambda_data *lambda;
 			te_lambda_data *out;
 
@@ -120,17 +149,9 @@ te_object* te_object_clone(te_object *object)
 			out->binding = malloc(sizeof(char*) * lambda->binding_count);
 
 			for (i = 0; i < lambda->binding_count; i++)
-			{
-				length = strlen(lambda->binding[i]) + 1;
-				out->binding[i] = malloc(length);
-				assert(out->binding[i]);
-				memcpy(out->binding[i], lambda->binding[i], length);
-			}
+				out->binding[i] = te_str_copy(lambda->binding[i]);
 
-			length = strlen(lambda->combination) + 1;
-			out->combination = malloc(length);
-			assert(out->combination);
-			memcpy(out->combination, lambda->combination, length);
+			out->combination = te_str_copy(lambda->combination);
 
 			user = out;
 		}
@@ -165,39 +186,49 @@ te_object* te_object_clone(te_object *object)
 	return out;
 }
 
+te_object* te_object_retain(te_object *object)
+{
+	if (object)
+		object->ref++;
+	return object;
+}
+
 void te_object_release(te_object *object)
 {
 	if (object)
 	{
-		te_type type = te_object_type(object);
-		
-		if (type == TE_TYPE_PROCEDURE)
+		if (--object->ref <= 0)
 		{
-			assert(object->data.procedure);
-
-			if (object->data.procedure->proc == te_lambda_proc)
+			te_type type = te_object_type(object);
+			
+			if (type == TE_TYPE_PROCEDURE)
 			{
-				int i;
-				te_lambda_data *lambda = object->data.procedure->user;
-				
-				assert(lambda);
+				assert(object->data.procedure);
 
-				for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
-				free(lambda->binding);
-				free(lambda->combination);
+				if (object->data.procedure->proc == te_lambda_proc)
+				{
+					int i;
+					te_lambda_data *lambda = object->data.procedure->user;
+					
+					assert(lambda);
 
-				free(lambda);
+					for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
+					free(lambda->binding);
+					free(lambda->combination);
+
+					free(lambda);
+				}
+
+				free(object->data.procedure);
+			}
+			else if (type == TE_TYPE_STRING)
+			{
+				assert(object->data.str_value);
+				free(object->data.str_value);
 			}
 
-			free(object->data.procedure);
+			free(object);
 		}
-		else if (type == TE_TYPE_STRING)
-		{
-			assert(object->data.str_value);
-			free(object->data.str_value);
-		}
-
-		free(object);
 	}
 }
 
@@ -208,6 +239,7 @@ te_object* te_make_nil(void)
 	out = malloc(sizeof(te_object));
 	assert(out);
 
+	out->ref = 1;
 	out->type = TE_TYPE_NIL;
 
 	return out;
@@ -222,6 +254,7 @@ te_object* te_make_procedure(te_procedure proc, void *user)
 	out = malloc(sizeof(te_object));
 	assert(out);
 
+	out->ref = 1;
 	out->type = TE_TYPE_PROCEDURE;
 	out->data.procedure = malloc(sizeof(te_proc_data));
 	assert(out->data.procedure);
@@ -238,6 +271,7 @@ te_object* te_make_userdata(void *user)
 	out = malloc(sizeof(te_object));
 	assert(out);
 
+	out->ref = 1;
 	out->type = TE_TYPE_USERDATA;
 	out->data.userdata = user;
 
@@ -251,6 +285,7 @@ te_object* te_make_integer(long value)
 	out = malloc(sizeof(te_object));
 	assert(out);
 
+	out->ref = 1;
 	out->type = TE_TYPE_INTEGER;
 	out->data.int_value = value;
 
@@ -264,6 +299,7 @@ te_object* te_make_number(double number)
 	out = malloc(sizeof(te_object));
 	assert(out);
 
+	out->ref = 1;
 	out->type = TE_TYPE_NUMBER;
 	out->data.num_value = number;
 
@@ -282,10 +318,9 @@ te_object* te_make_string(const char *str, const char *end)
 	assert(out);
 
 	length = end - str;
+	out->ref = 1;
 	out->type = TE_TYPE_STRING;
-	out->data.str_value = malloc(length + 1);
-	memcpy(out->data.str_value, str, length);
-	out->data.str_value[length] = '\0';
+	out->data.str_value = te_str_extract(str, end);
 
 	return out;
 }
@@ -404,6 +439,12 @@ void te_release(tiny_eval *te)
 		free(te->symbol[i]);
 	}
 
+	if (te->symbol)
+		free(te->symbol);
+
+	if (te->env)
+		free(te->env);
+
 	free(te);
 }
 
@@ -481,7 +522,6 @@ te_symbol* te_env_find(tiny_eval *te, const char *name)
 
 te_symbol* te_symbol_init(const char *name, te_object *object)
 {
-	size_t length;
 	te_symbol *s;
 
 	assert(name);
@@ -489,10 +529,7 @@ te_symbol* te_symbol_init(const char *name, te_object *object)
 	s = malloc(sizeof(te_symbol));
 	assert(s);
 
-	length = strlen(name) + 1;
-	s->name = malloc(length);
-	memcpy(s->name, name, length);
-
+	s->name = te_str_copy(name);
 	s->object = object;
 
 	return s;
@@ -568,7 +605,6 @@ const char *te_error(tiny_eval *te)
 
 void te_set_error(tiny_eval *te, const char *str)
 {
-	size_t length;
 	assert(te);
 
 	if (te->error)
@@ -579,9 +615,7 @@ void te_set_error(tiny_eval *te, const char *str)
 
 	if (str)
 	{
-		length = strlen(str) + 1;
-		te->error = malloc(length);
-		memcpy(te->error, str, length);
+		te->error = te_str_copy(str);
 	}
 }
 
@@ -644,16 +678,11 @@ te_object* te_define_lambda(tiny_eval *te, const char **exp)
 		else
 		{
 			char *field;
-			size_t length;
 			int binding_cap = 0;
 
 			for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
 
-			length = p - *exp;
-			field = malloc(length + 1);
-			assert(field);
-			memcpy(field, *exp, length);
-			field[length] = 0;
+			field = te_str_extract(*exp, p);
 
 			while (*p != ')')
 			{
@@ -673,11 +702,7 @@ te_object* te_define_lambda(tiny_eval *te, const char **exp)
 					assert(lambda->binding);
 				}
 
-				i = lambda->binding_count++;
-				length = p - *exp;
-				lambda->binding[i] = malloc(length + 1);
-				memcpy(lambda->binding[i], *exp, length);
-				lambda->binding[i][length] = 0;
+				lambda->binding[lambda->binding_count++] = te_str_extract(*exp, p);
 
 				for (; *p && te_is_space(*p) && *p != ')'; p++);
 			}
@@ -700,14 +725,10 @@ te_object* te_define_lambda(tiny_eval *te, const char **exp)
 						p++;
 					}
 
-					length = p - *exp;
-					lambda->combination = malloc(length + 1);
-					assert(lambda->combination);
-					memcpy(lambda->combination, *exp, length);
-					lambda->combination[length] = 0;
+					lambda->combination = te_str_extract(*exp, p);
 
 					out = te_make_procedure(te_lambda_proc, lambda);
-					te_define(te, field, te_object_clone(out));
+					te_define(te, field, te_object_retain(out));
 				}
 				else
 				{
@@ -753,10 +774,7 @@ te_object* te_define_symbol(tiny_eval *te, const char **exp)
 	}
 	else
 	{
-		field = malloc(length + 1);
-		assert(field);
-		memcpy(field, *exp, length);
-		field[length] = '\0';
+		field = te_str_extract(*exp, p);
 
 		for (*exp = p; *p && te_is_space(*p); p++);
 
@@ -778,11 +796,7 @@ te_object* te_define_symbol(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				length = p - *exp;
-				value = malloc(length + 1);
-				assert(value);
-				memcpy(value, *exp, length);
-				value[length] = '\0';
+				value = te_str_extract(*exp, p);
 			}
 		}
 		else if (*p == '"')
@@ -795,11 +809,7 @@ te_object* te_define_symbol(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				length = ++p - *exp;
-				value = malloc(length + 1);
-				assert(value);
-				memcpy(value, *exp, length);
-				value[length] = '\0';
+				value = te_str_extract(*exp, ++p);
 			}
 		}
 		else
@@ -814,10 +824,7 @@ te_object* te_define_symbol(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				value = malloc(length + 1);
-				assert(value);
-				memcpy(value, *exp, length);
-				value[length] = '\0';
+				value = te_str_extract(*exp, p);
 			}
 		}
 	}
@@ -838,7 +845,7 @@ te_object* te_define_symbol(tiny_eval *te, const char **exp)
 			
 			if (!te_error(te))
 			{
-				te_define(te, field, te_object_clone(result));
+				te_define(te, field, te_object_retain(result));
 			}
 		}
 	}
@@ -857,7 +864,6 @@ te_object* eval(tiny_eval *te, const char **exp)
 	te_object *result = NULL;
 	const char *p;
 	char *field = NULL;
-	size_t length;
 
 	for (p = *exp; *p && te_is_space(*p); p++);
 
@@ -869,11 +875,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 
 		for (*exp = ++p; *p && !te_is_space(*p) && *p != ')'; p++);
 
-		length = p - *exp;
-		field = malloc(length + 1);
-		assert(field);
-		memcpy(field, *exp, length);
-		field[length] = '\0';
+		field = te_str_extract(*exp, p);
 
 		if (_stricmp(field, "define") == 0)
 		{
@@ -966,11 +968,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 
 		for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
 
-		length = p - *exp;
-		field = malloc(length + 1);
-		assert(field);
-		memcpy(field, *exp, length);
-		field[length] = '\0';
+		field = te_str_extract(*exp, p);
 
 		if (strchr(field, '.'))
 		{
@@ -994,7 +992,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 				}
 				else
 				{
-					result = te_object_clone(s->object);
+					result = te_object_retain(s->object);
 				}
 			}
 		}
@@ -1020,7 +1018,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 				}
 				else
 				{
-					result = te_object_clone(s->object);
+					result = te_object_retain(s->object);
 				}
 			}
 		}
@@ -1051,7 +1049,7 @@ te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int 
 		frame = te_inherit(te);
 
 		for (i = 0; i < count; i++)
-			te_define(frame, lambda->binding[i], te_object_clone(operands[i]));
+			te_define(frame, lambda->binding[i], te_object_retain(operands[i]));
 
 		result = te_eval(frame, lambda->combination);
 
