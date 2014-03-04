@@ -38,12 +38,19 @@ struct tag_tiny_eval
 {
 	char *error;
 
+	/* symbols inherited from ancesters */
 	struct tag_te_symbol **env;
 	int env_count;
 
+	/* symbols defined in the scope */
 	struct tag_te_symbol **symbol;
 	int symbol_count;
 	int symbol_cap;
+
+	/* closure and operands */
+	struct tag_te_symbol **local;
+	int local_count;
+	int local_cap;
 };
 
 struct tag_te_object
@@ -78,6 +85,8 @@ struct tag_te_lambda_data
 	char **binding;
 	int binding_count;
 	char *combination;
+	struct tag_te_symbol **local;
+	int local_count;
 };
 
 typedef struct tag_te_symbol te_symbol;
@@ -113,77 +122,99 @@ char* te_str_copy(const char *str)
 	return te_str_extract(str, str + strlen(str));
 }
 
+int te_is_space(char ch)
+{
+	switch (ch)
+	{
+	case ' ':
+	case '\t':
+	case '\r':
+	case '\n':
+		return 1;
+
+	default:
+		break;
+	}
+	
+	return 0;
+}
+
+const char* te_close_string(const char *p)
+{
+	int skip = 0;
+	int done = 0;
+	assert(*p == '"');
+
+	for (p++; *p && !done; p++)
+	{
+		if (!skip)
+		{
+			if (*p == '"')
+				done = 1;
+			else if (*p == '\\')
+				skip = 1;
+		}
+		else
+		{
+			skip = 0;
+		}
+	}
+
+	return p;
+}
+
+const char* te_close_bracket(const char *p)
+{
+	int count = 1;
+	assert(*p == '(');
+
+	for (p++; *p && count != 0; p++)
+	{
+		if (*p == '(')
+			count++;
+		else if (*p == ')')
+			count--;
+		else if (*p == '"')
+			p = te_close_string(p) - 1;
+	}
+
+	return p;
+}
+
+const char* te_token_begin(const char *p)
+{
+	assert(p);
+
+	for (; *p && te_is_space(*p); p++);
+
+	return p;
+}
+
+const char* te_token_end(const char *p)
+{
+	assert(p);
+	assert(!te_is_space(*p));
+	assert(*p != ')');
+
+	if (*p == '(')
+	{
+		p = te_close_bracket(p);
+	}
+	else if (*p == '"')
+	{
+		p = te_close_string(p);
+	}
+	else
+	{
+		for (; *p && !te_is_space(*p) && *p != ')'; p++);
+	}
+
+	return p;
+}
+
 te_type te_object_type(te_object *object)
 {
 	return object ? object->type : TE_TYPE_NIL;
-}
-
-te_object* te_object_clone(te_object *object)
-{
-	te_object *out = NULL;
-	te_type type = te_object_type(object);
-
-	if (type == TE_TYPE_NIL && object)
-	{
-		return te_make_nil();
-	}
-	else if (type == TE_TYPE_PROCEDURE)
-	{
-		void *user = object->data.procedure->user;
-
-		assert(object->data.procedure);
-
-		if (object->data.procedure->proc == te_lambda_proc)
-		{
-			int i;
-			te_lambda_data *lambda;
-			te_lambda_data *out;
-
-			lambda = object->data.procedure->user;
-			assert(lambda);
-
-			out = malloc(sizeof(te_lambda_data));
-			assert(out);
-
-			out->binding_count = lambda->binding_count;
-			out->binding = malloc(sizeof(char*) * lambda->binding_count);
-
-			for (i = 0; i < lambda->binding_count; i++)
-				out->binding[i] = te_str_copy(lambda->binding[i]);
-
-			out->combination = te_str_copy(lambda->combination);
-
-			user = out;
-		}
-
-		out = te_make_procedure(object->data.procedure->proc, user);
-	}
-	else if (type == TE_TYPE_USERDATA)
-	{
-		out = te_make_userdata(te_to_userdata(object));
-	}
-	else if (type == TE_TYPE_INTEGER)
-	{
-		out = te_make_integer(te_to_integer(object));
-	}
-	else if (type == TE_TYPE_NUMBER)
-	{
-		out = te_make_number(te_to_number(object));
-	}
-	else if (type == TE_TYPE_STRING)
-	{
-		const char *str;
-		const char *end;
-
-		str = te_to_string(object);
-		assert(str);
-
-		end = str + strlen(str);
-
-		out = te_make_string(str, end);
-	}
-
-	return out;
 }
 
 te_object* te_object_retain(te_object *object)
@@ -417,6 +448,9 @@ tiny_eval* te_init(void)
 	te->symbol = NULL;
 	te->symbol_cap = 0;
 	te->symbol_count = 0;
+	te->local = NULL;
+	te->local_cap = 0;
+	te->local_count = 0;
 
 	return te;
 }
@@ -430,6 +464,9 @@ void te_release(tiny_eval *te)
 	if (te->error)
 		free(te->error);
 
+	if (te->env)
+		free(te->env);
+
 	for (i = 0; i < te->symbol_count; i++)
 	{
 		assert(te->symbol[i]->name);
@@ -442,8 +479,17 @@ void te_release(tiny_eval *te)
 	if (te->symbol)
 		free(te->symbol);
 
-	if (te->env)
-		free(te->env);
+	for (i = 0; i < te->local_count; i++)
+	{
+		assert(te->local[i]->name);
+		free(te->local[i]->name);
+
+		te_object_release(te->local[i]->object);
+		free(te->local[i]);
+	}
+
+	if (te->local)
+		free(te->local);
 
 	free(te);
 }
@@ -463,6 +509,10 @@ tiny_eval* te_inherit(tiny_eval *ancestor)
 	te->symbol = NULL;
 	te->symbol_cap = 0;
 	te->symbol_count = 0;
+
+	te->local = NULL;
+	te->local_cap = 0;
+	te->local_count = 0;
 
 	te->env_count = ancestor->env_count + ancestor->symbol_count;
 	te->env = malloc(sizeof(te_symbol*) * te->env_count);
@@ -560,23 +610,6 @@ void te_define(tiny_eval *te, const char *symbol, te_object *object)
 	}
 }
 
-int te_is_space(char ch)
-{
-	switch (ch)
-	{
-	case ' ':
-	case '\t':
-	case '\r':
-	case '\n':
-		return 1;
-
-	default:
-		break;
-	}
-	
-	return 0;
-}
-
 te_object* te_eval(tiny_eval *te, const char *expression)
 {
 	te_object *result = NULL;
@@ -591,7 +624,7 @@ te_object* te_eval(tiny_eval *te, const char *expression)
 	{
 		te_object_release(result);
 		result = eval(te, exp);
-		for (; *(*exp) && te_is_space(*(*exp)); (*exp)++);
+		*exp = te_token_begin(*exp);
 	}
 
 	return result;
@@ -651,210 +684,98 @@ te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count
 	return result;
 }
 
-te_object* te_define_lambda(tiny_eval *te, const char **exp)
+te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
 {
-	int i;
-	te_object *out = NULL;
-	te_lambda_data *lambda;
-	const char *p = *exp;
+	const char *start;
+	const char *p;
+	char *symbol;
+	char *combination;
+	te_object *result = NULL;
 
-	assert(te);
-	assert(exp);
+	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
+	p = te_token_end(start);
 
-	if (*p == '(')
+	symbol = te_str_extract(start, p);
+
+	start = te_token_begin(p);
+	p = te_token_end(start);
+
+	combination = te_str_extract(start, p);
+
+	p = te_token_begin(p);
+	if (*p != ')')
 	{
+		te_set_error(te, "define: unexpected end of expression");
+	}
+	else
+	{
+		result = te_eval(te, combination);
+
+		if (!te_error(te))
+		{
+			te_define(te, symbol, te_object_retain(result));
+		}
+	}
+
+	if (symbol)
+		free(symbol);
+
+	if (combination)
+		free(combination);
+
+	return result;
+}
+
+te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
+{
+	const char *start;
+	const char *p;
+	te_object *result = NULL;
+
+	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
+	p = te_token_end(start);
+
+	if (*start == '(' && *(p - 1) == ')')
+	{
+		te_lambda_data *lambda;
+		int binding_cap = 0;
+
 		lambda = malloc(sizeof(te_lambda_data));
 		assert(lambda);
 
 		lambda->binding = NULL;
 		lambda->binding_count = 0;
 		lambda->combination = NULL;
+		lambda->local = NULL;
+		lambda->local_count = 0;
 
-		for (p++; *p && te_is_space(*p); p++);
-		if (!*p)
+		start++;
+		while (*start != ')')
 		{
-			te_set_error(te, "lambda: unexpected end of expression");
-		}
-		else
-		{
-			char *field;
-			int binding_cap = 0;
+			start = te_token_begin(start);
+			p = te_token_end(start);
 
-			for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
-
-			field = te_str_extract(*exp, p);
-
-			while (*p != ')')
+			if (lambda->binding_count <= binding_cap)
 			{
-				for (; *p && te_is_space(*p) && *p != ')'; p++);
-				for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
-
-				if (!*p)
-				{
-					te_set_error(te, "lambda: unexpected end of expression");
-					break;
-				}
-				
-				if (lambda->binding_count >= binding_cap)
-				{
-					binding_cap += 8;
-					lambda->binding = realloc(lambda->binding, sizeof(char*) * binding_cap);
-					assert(lambda->binding);
-				}
-
-				lambda->binding[lambda->binding_count++] = te_str_extract(*exp, p);
-
-				for (; *p && te_is_space(*p) && *p != ')'; p++);
+				binding_cap += 8;
+				lambda->binding = realloc(lambda->binding, binding_cap);
+				assert(lambda->binding);
 			}
 
-			if (!te_error(te))
-			{
-				for (p++; *p && te_is_space(*p); p++);
-				*exp = p;
-				
-				if (*p == '(')
-				{
-					int bracket = 1;
-					p++;
-					while (*p && bracket != 0)
-					{
-						if (*p == '(')
-							bracket++;
-						else if (*p == ')')
-							bracket--;
-						p++;
-					}
+			lambda->binding[lambda->binding_count++] = te_str_extract(start, p);
 
-					lambda->combination = te_str_extract(*exp, p);
-
-					out = te_make_procedure(te_lambda_proc, lambda);
-					te_define(te, field, te_object_retain(out));
-				}
-				else
-				{
-					te_set_error(te, "lambda: no expression");
-				}
-			}
-
-			free(field);
-			*exp = ++p;
+			start = te_token_begin(p);
 		}
 
-		if (te_error(te))
-		{
-			for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
-			free(lambda->binding);
+		start = te_token_begin(++start);
+		lambda->combination = te_str_extract(start, end - 1);
 
-			if (lambda->combination)
-				free(lambda->combination);
-		}
+		result = te_make_procedure(te_lambda_proc, lambda);
 	}
 	else
 	{
-		te_set_error(te, "lambda: not a lambda");
+		te_set_error(te, "lambda: invalid expression");
 	}
-
-	return out;
-}
-
-te_object* te_define_symbol(tiny_eval *te, const char **exp)
-{
-	char *field = NULL;
-	char *value = NULL;
-	const char *p;
-	size_t length;
-	te_object *result = NULL;
-
-	for (p = *exp; *p && !te_is_space(*p) && *p != '(' && *p != ')' && *p != '"'; p++);
-
-	length = p - *exp;
-	if (length == 0)
-	{
-		te_set_error(te, "define: no symbol");
-	}
-	else
-	{
-		field = te_str_extract(*exp, p);
-
-		for (*exp = p; *p && te_is_space(*p); p++);
-
-		if (*p == '(')
-		{
-			int bracket = 1;
-
-			for (*exp = p++; *p && bracket != 0; p++)
-			{
-				if (*p == '(')
-					bracket++;
-				else if (*p == ')')
-					bracket--;
-			}
-
-			if (bracket != 0)
-			{
-				te_set_error(te, "define: mismatch bracket");
-			}
-			else
-			{
-				value = te_str_extract(*exp, p);
-			}
-		}
-		else if (*p == '"')
-		{
-			for (*exp = p++; *p && *p != '"'; p++);
-
-			if (*p != '"')
-			{
-				te_set_error(te, "define: unexpected end of string");
-			}
-			else
-			{
-				value = te_str_extract(*exp, ++p);
-			}
-		}
-		else
-		{
-			for (; *p && te_is_space(*p) && *p != ')'; p++);
-			for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
-
-			length = p - *exp;
-			if (length == 0)
-			{
-				te_set_error(te, "define: nothing to assign");
-			}
-			else
-			{
-				value = te_str_extract(*exp, p);
-			}
-		}
-	}
-
-	if (!te_error(te))
-	{
-		assert(field);
-		assert(value);
-
-		if (!*p)
-		{
-			te_set_error(te, "define: unexpected end of expression");
-		}
-		else
-		{
-			*exp = ++p;
-			result = te_eval(te, value);
-			
-			if (!te_error(te))
-			{
-				te_define(te, field, te_object_retain(result));
-			}
-		}
-	}
-
-	if (field)
-		free(field);
-
-	if (value)
-		free(value);
 
 	return result;
 }
@@ -865,38 +786,43 @@ te_object* eval(tiny_eval *te, const char **exp)
 	const char *p;
 	char *field = NULL;
 
-	for (p = *exp; *p && te_is_space(*p); p++);
+	*exp = te_token_begin(*exp);
+	p = *exp;
 
 	if (*p == '(')
 	{
-		te_object **operands = NULL;
-		int operand_cap = 0;
-		int operand_count = 0;
+		const char *start;
 
-		for (*exp = ++p; *p && !te_is_space(*p) && *p != ')'; p++);
+		start = te_token_begin(++p);
+		p = te_token_end(start);
 
-		field = te_str_extract(*exp, p);
+		field = te_str_extract(start, p);
 
 		if (_stricmp(field, "define") == 0)
 		{
-			for (; *p && te_is_space(*p); p++);
-			
-			if (*p == '(')
-			{
-				result = te_define_lambda(te, &p);
-			}
-			else
-			{
-				result = te_define_symbol(te, &p);
-			}
-
+			p = te_token_end(*exp);
+			result = te_define_symbol(te, *exp, p);
 			*exp = p;
+		}
+		else if (_stricmp(field, "lambda") == 0)
+		{
+			p = te_token_end(*exp);
+			result = te_make_lambda(te, *exp, p);
+			*exp = p;
+		}
+		else if (_stricmp(field, "cond") == 0)
+		{
 		}
 		else
 		{
+			te_object **operands = NULL;
+			int operand_cap = 0;
+			int operand_count = 0;
+
 			while (*p != ')' && !te_error(te))
 			{
 				te_object *operand = eval(te, &p);
+				p = te_token_begin(p);
 
 				if (te_error(te))
 					break;
@@ -924,38 +850,26 @@ te_object* eval(tiny_eval *te, const char **exp)
 
 				*exp = ++p;
 			}
-		}
 
-		for (operand_cap = 0; operand_cap < operand_count; te_object_release(operands[operand_cap++]));
-		free(operands);
+			for (operand_cap = 0; operand_cap < operand_count; te_object_release(operands[operand_cap++]));
+			free(operands);
+		}
 	}
 	else if (*p == '"')
 	{
-		for (*exp = ++p; *p; p++)
-		{
-			if (*p == '\\')
-			{
-				p++;
-			}
-			else
-			{
-				if (*p == '"')
-				{
-					break;
-				}
-			}
-		}
+		*exp = p;
+		p = te_token_end(*exp);
 
-		if (*p != '"')
+		if (*(p - 1) != '"')
 		{
 			te_set_error(te, "eval: unexpected end of string");
 		}
 		else
 		{
-			result = te_make_string(*exp, p);
+			result = te_make_string(*exp + 1, p - 1);
 		}
 
-		*exp = ++p;
+		*exp = p;
 	}
 	else if (*p == ')')
 	{
@@ -966,7 +880,8 @@ te_object* eval(tiny_eval *te, const char **exp)
 	{
 		te_symbol *s;
 
-		for (*exp = p; *p && !te_is_space(*p) && *p != ')'; p++);
+		*exp = p;
+		p = te_token_end(p);
 
 		field = te_str_extract(*exp, p);
 

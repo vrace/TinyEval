@@ -4,7 +4,7 @@
 
 #include "te.h"
 
-static char expression[] = "(define (square x) (* x x)) (define A 4) (+ 1 (* 2 3) (square A))";
+static char expression[] = "(define mul (lambda (a b) (* a b))) (mul 2 3)";
 /*
 static char expression[] = "(+ 1 (* 2 3) 4 A)";
 */
