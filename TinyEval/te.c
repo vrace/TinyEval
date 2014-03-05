@@ -34,23 +34,19 @@ wane <newsheep@gmail.com>
 
 #include "te.h"
 
+struct tag_te_environment
+{
+	struct tag_te_environment *link;
+	struct tag_te_symbol *symbol;
+	int symbol_count;
+	int symbol_cap;
+};
+
 struct tag_tiny_eval
 {
 	char *error;
-
-	/* symbols inherited from ancesters */
-	struct tag_te_symbol **env;
-	int env_count;
-
-	/* symbols defined in the scope */
-	struct tag_te_symbol **symbol;
-	int symbol_count;
-	int symbol_cap;
-
-	/* closure and operands */
-	struct tag_te_symbol **local;
-	int local_count;
-	int local_cap;
+	struct tag_te_environment global;
+	struct tag_te_environment *env;
 };
 
 struct tag_te_object
@@ -85,11 +81,11 @@ struct tag_te_lambda_data
 	char **binding;
 	int binding_count;
 	char *combination;
-	struct tag_te_symbol **local;
-	int local_count;
+	struct tag_te_environment env;
 };
 
 typedef struct tag_te_symbol te_symbol;
+typedef struct tag_te_environment te_environment;
 typedef struct tag_te_proc_data te_proc_data;
 typedef struct tag_te_lambda_data te_lambda_data;
 
@@ -246,6 +242,16 @@ void te_object_release(te_object *object)
 					for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
 					free(lambda->binding);
 					free(lambda->combination);
+
+					for (i = 0; i < lambda->env.symbol_count; i++)
+					{
+						assert(lambda->env.symbol[i].name);
+						free(lambda->env.symbol[i].name);
+						te_object_release(lambda->env.symbol[i].object);
+					}
+
+					if (lambda->env.symbol)
+						free(lambda->env.symbol);
 
 					free(lambda);
 				}
@@ -443,14 +449,11 @@ tiny_eval* te_init(void)
 	assert(te);
 
 	te->error = NULL;
-	te->env = NULL;
-	te->env_count = 0;
-	te->symbol = NULL;
-	te->symbol_cap = 0;
-	te->symbol_count = 0;
-	te->local = NULL;
-	te->local_cap = 0;
-	te->local_count = 0;
+	te->global.link = NULL;
+	te->global.symbol = NULL;
+	te->global.symbol_cap = 0;
+	te->global.symbol_count = 0;
+	te->env = &te->global;
 
 	return te;
 }
@@ -458,156 +461,99 @@ tiny_eval* te_init(void)
 void te_release(tiny_eval *te)
 {
 	int i;
-
 	assert(te);
 
 	if (te->error)
 		free(te->error);
 
-	if (te->env)
-		free(te->env);
-
-	for (i = 0; i < te->symbol_count; i++)
+	for (i = 0; i < te->global.symbol_count; i++)
 	{
-		assert(te->symbol[i]->name);
-		free(te->symbol[i]->name);
+		assert(te->global.symbol[i].name);
 
-		te_object_release(te->symbol[i]->object);
-		free(te->symbol[i]);
+		free(te->global.symbol[i].name);
+		te_object_release(te->global.symbol[i].object);
 	}
 
-	if (te->symbol)
-		free(te->symbol);
-
-	for (i = 0; i < te->local_count; i++)
-	{
-		assert(te->local[i]->name);
-		free(te->local[i]->name);
-
-		te_object_release(te->local[i]->object);
-		free(te->local[i]);
-	}
-
-	if (te->local)
-		free(te->local);
+	if (te->global.symbol)
+		free(te->global.symbol);
 
 	free(te);
-}
-
-tiny_eval* te_inherit(tiny_eval *ancestor)
-{
-	tiny_eval *te;
-	int i;
-
-	assert(ancestor);
-
-	te = malloc(sizeof(tiny_eval));
-	assert(te);
-
-	te->error = NULL;
-
-	te->symbol = NULL;
-	te->symbol_cap = 0;
-	te->symbol_count = 0;
-
-	te->local = NULL;
-	te->local_cap = 0;
-	te->local_count = 0;
-
-	te->env_count = ancestor->env_count + ancestor->symbol_count;
-	te->env = malloc(sizeof(te_symbol*) * te->env_count);
-
-	for (i = 0; i < ancestor->symbol_count; i++)
-		te->env[i] = ancestor->symbol[i];
-
-	for (i = 0; i < ancestor->env_count; i++)
-		te->env[i + ancestor->symbol_count] = ancestor->env[i];
-
-	return te;
 }
 
 te_symbol* te_symbol_find(tiny_eval *te, const char *name)
 {
 	int i;
 	te_symbol *out;
+	te_environment *env;
 
 	assert(te);
 	assert(name);
 
 	out = NULL;
-	for (i = 0; i < te->symbol_count; i++)
+	env = te->env;
+
+	while (env && !out)
 	{
-		assert(te->symbol[i]->name);
-		if (_stricmp(name, te->symbol[i]->name) == 0)
+		for (i = env->symbol_count - 1; i >= 0; i--)
 		{
-			out = te->symbol[i];
-			break;
+			assert(env->symbol[i].name);
+			if (_stricmp(name, env->symbol[i].name) == 0)
+			{
+				out = &env->symbol[i];
+				break;
+			}
 		}
+
+		env = env->link;
 	}
 
 	return out;
 }
 
-te_symbol* te_env_find(tiny_eval *te, const char *name)
+void te_symbol_init(te_symbol *s, const char *name, te_object *object)
 {
-	int i;
-	te_symbol *out;
-
-	assert(te);
-	assert(name);
-
-	out = NULL;
-	for (i = 0; i < te->env_count; i++)
-	{
-		assert(te->env[i]->name);
-		if (_stricmp(name, te->env[i]->name) == 0)
-		{
-			out = te->env[i];
-			break;
-		}
-	}
-
-	return out;
-}
-
-te_symbol* te_symbol_init(const char *name, te_object *object)
-{
-	te_symbol *s;
-
-	assert(name);
-
-	s = malloc(sizeof(te_symbol));
 	assert(s);
+	assert(name);
 
 	s->name = te_str_copy(name);
 	s->object = object;
-
-	return s;
 }
 
 void te_define(tiny_eval *te, const char *symbol, te_object *object)
 {
-	te_symbol *s;
+	te_environment *env;
 
 	assert(te);
 	assert(symbol);
-	
-	s = te_symbol_find(te, symbol);
-	if (s)
-	{
-		te_object_release(s->object);
-		s->object = object;
-	}
-	else
-	{
-		if (te->symbol_count >= te->symbol_cap)
-		{
-			te->symbol_cap += 100;
-			te->symbol = realloc(te->symbol, sizeof(te_symbol*) * te->symbol_cap);
-		}
 
-		te->symbol[te->symbol_count++] = te_symbol_init(symbol, object);
+	env = &te->global;
+	if (env->symbol_count >= env->symbol_cap)
+	{
+		env->symbol_cap += 100;
+		env->symbol = realloc(env->symbol, sizeof(te_symbol) * env->symbol_cap);
+		assert(env->symbol);
 	}
+
+	te_symbol_init(&env->symbol[env->symbol_count++], symbol, object);
+}
+
+void te_define_local(tiny_eval *te, const char *symbol, te_object *object)
+{
+	te_environment *env;
+
+	assert(te);
+	assert(te->env);
+	assert(symbol);
+
+	env = te->env;
+	if (env->symbol_count >= env->symbol_cap)
+	{
+		env->symbol_cap += 100;
+		env->symbol = realloc(env->symbol, sizeof(te_symbol) * env->symbol_cap);
+		assert(env->symbol);
+	}
+
+	te_symbol_init(&env->symbol[env->symbol_count++], symbol, object);
 }
 
 te_object* te_eval(tiny_eval *te, const char *expression)
@@ -662,8 +608,6 @@ te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count
 
 	result = NULL;
 	s = te_symbol_find(te, op);
-	if (!s)
-		s = te_env_find(te, op);
 
 	if (s)
 	{
@@ -703,7 +647,7 @@ te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
 	combination = te_str_extract(start, p);
 
 	p = te_token_begin(p);
-	if (*p != ')')
+	if (*p != ')' || (p + 1) != end)
 	{
 		te_set_error(te, "define: unexpected end of expression");
 	}
@@ -713,7 +657,7 @@ te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
 
 		if (!te_error(te))
 		{
-			te_define(te, symbol, te_object_retain(result));
+			te_define_local(te, symbol, te_object_retain(result));
 		}
 	}
 
@@ -746,8 +690,10 @@ te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
 		lambda->binding = NULL;
 		lambda->binding_count = 0;
 		lambda->combination = NULL;
-		lambda->local = NULL;
-		lambda->local_count = 0;
+		lambda->env.link = te->env;
+		lambda->env.symbol = NULL;
+		lambda->env.symbol_cap = 0;
+		lambda->env.symbol_count = 0;
 
 		start++;
 		while (*start != ')')
@@ -831,6 +777,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 				{
 					operand_cap += 32;
 					operands = realloc(operands, sizeof(te_object*) * operand_cap);
+					assert(operands);
 				}
 
 				operands[operand_count++] = operand;
@@ -898,8 +845,6 @@ te_object* eval(tiny_eval *te, const char **exp)
 			else
 			{
 				s = te_symbol_find(te, field);
-				if (!s)
-					s = te_env_find(te, field);
 
 				if (!s || !s->object)
 				{
@@ -924,8 +869,6 @@ te_object* eval(tiny_eval *te, const char **exp)
 			else
 			{
 				s = te_symbol_find(te, field);
-				if (!s)
-					s = te_env_find(te, field);
 
 				if (!s || !s->object)
 				{
@@ -950,7 +893,6 @@ te_object* eval(tiny_eval *te, const char **exp)
 te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count)
 {
 	int i;
-	tiny_eval *frame;
 	te_lambda_data *lambda;
 	te_object *result = NULL;
 
@@ -961,17 +903,15 @@ te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int 
 
 	if (lambda->binding_count == count)
 	{
-		frame = te_inherit(te);
+		te_environment *prev = te->env;
+		te->env = &lambda->env;
 
 		for (i = 0; i < count; i++)
-			te_define(frame, lambda->binding[i], te_object_retain(operands[i]));
+			te_define_local(te, lambda->binding[i], te_object_retain(operands[i]));
 
-		result = te_eval(frame, lambda->combination);
+		result = te_eval(te, lambda->combination);
 
-		if (te_error(frame))
-			te_set_error(te, te_error(frame));
-
-		te_release(frame);
+		te->env = prev;
 	}
 	else
 	{
