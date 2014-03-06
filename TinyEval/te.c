@@ -34,6 +34,10 @@ wane <newsheep@gmail.com>
 
 #include "te.h"
 
+#ifdef _MSC_VER
+#define strcasecmp _stricmp
+#endif
+
 struct tag_te_environment
 {
 	struct tag_te_environment *link;
@@ -497,7 +501,7 @@ te_symbol* te_symbol_find(tiny_eval *te, const char *name)
 		for (i = env->symbol_count - 1; i >= 0; i--)
 		{
 			assert(env->symbol[i].name);
-			if (_stricmp(name, env->symbol[i].name) == 0)
+			if (strcasecmp(name, env->symbol[i].name) == 0)
 			{
 				out = &env->symbol[i];
 				break;
@@ -744,19 +748,19 @@ te_object* eval(tiny_eval *te, const char **exp)
 
 		field = te_str_extract(start, p);
 
-		if (_stricmp(field, "define") == 0)
+		if (strcasecmp(field, "define") == 0)
 		{
 			p = te_token_end(*exp);
 			result = te_define_symbol(te, *exp, p);
 			*exp = p;
 		}
-		else if (_stricmp(field, "lambda") == 0)
+		else if (strcasecmp(field, "lambda") == 0)
 		{
 			p = te_token_end(*exp);
 			result = te_make_lambda(te, *exp, p);
 			*exp = p;
 		}
-		else if (_stricmp(field, "cond") == 0)
+		else if (strcasecmp(field, "cond") == 0)
 		{
 		}
 		else
@@ -765,7 +769,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 			int operand_cap = 0;
 			int operand_count = 0;
 
-			while (*p != ')' && !te_error(te))
+			while (*p && *p != ')' && !te_error(te))
 			{
 				te_object *operand = eval(te, &p);
 				p = te_token_begin(p);
