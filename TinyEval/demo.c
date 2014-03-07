@@ -1,13 +1,58 @@
+//#include <Windows.h>
+//#include "vld.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 
 #include "te.h"
 
-static char expression[] = "(define mul (lambda (a b) (* a b))) (mul 2 3)";
-/*
-static char expression[] = "(+ 1 (* 2 3) 4 A)";
-*/
+static char expression[] = 
+"\
+(define square-root (lambda (x)                                             \n\
+    (define abs-value (lambda (x) (cond ((< x 0) (- x))                     \n\
+                                  (else x))))                               \n\
+    (define square (lambda (x) (* x x)))                                    \n\
+    (define average (lambda (a b) (/ (+ a b) 2)))                           \n\
+    (define improve (lambda (guess) (average guess (/ x guess))))           \n\
+    (define good-enough (lambda (guess) (< (abs-value (- x (square guess))) 0.0001)))\n\
+    (define try (lambda (guess) (cond ((good-enough guess) guess)           \n\
+                                      (else (try (improve guess))))))       \n\
+    (try 1)))                                                               \n\
+(square-root 3)";
+
+te_object* equals(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	return te_make_integer((te_to_number(operands[0]) == te_to_number(operands[1])) ? 1 : 0);
+}
+
+te_object* lesser(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	return te_make_integer((te_to_number(operands[0]) < te_to_number(operands[1])) ? 1 : 0);
+}
+
+te_object* greater(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	return te_make_integer((te_to_number(operands[0]) > te_to_number(operands[1])) ? 1 : 0);
+}
+
+te_object* negative(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	return te_make_number(-te_to_number(operands[0]));
+}
+
+te_object* minus(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	if (count == 1)
+		return negative(te, user, operands, count);
+
+	return te_make_number(te_to_number(operands[0]) - te_to_number(operands[1]));
+}
+
+te_object* divides(tiny_eval *te, void *user, te_object *operands[], int count)
+{
+	return te_make_number(te_to_number(operands[0]) / te_to_number(operands[1]));
+}
 
 te_object* plus(tiny_eval *te, void *user, te_object *operands[], int count)
 {
@@ -77,6 +122,11 @@ int main(void)
 	te_define(te, "+", te_make_procedure(plus, NULL));
 	te_define(te, "*", te_make_procedure(multiplies, NULL));
 	te_define(te, "A", te_make_integer(5));
+	te_define(te, "<", te_make_procedure(lesser, NULL));
+	te_define(te, "=", te_make_procedure(equals, NULL));
+	te_define(te, ">", te_make_procedure(greater, NULL));
+	te_define(te, "-", te_make_procedure(minus, NULL));
+	te_define(te, "/", te_make_procedure(divides, NULL));
 
 	result = te_eval(te, expression);
 

@@ -36,6 +36,7 @@ wane <newsheep@gmail.com>
 
 #ifdef _MSC_VER
 #define strcasecmp _stricmp
+#define strncasecmp _strnicmp
 #endif
 
 struct tag_te_environment
@@ -730,6 +731,80 @@ te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
+te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
+{
+	const char *start;
+	const char *p;
+	te_object *result = NULL;
+
+	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
+	p = te_token_end(start);
+
+	while (p < end && !te_error(te) && !result)
+	{
+		const char *block = start;
+
+		if (*start == '(')
+		{
+			p = te_token_end(++start);
+			if (strncasecmp(start, "else", p - start) == 0)
+			{
+				result = te_make_integer(1);
+				start = p;
+			}
+			else
+			{
+				result = eval(te, &start);
+			}
+
+			if (start != p)
+			{
+				te_set_error(te, "cond: can't eval condition");
+			}
+			else if (!te_error(te))
+			{
+				int cond = 0;
+
+				if (te_object_type(result) == TE_TYPE_INTEGER)
+					cond = te_to_integer(result);
+
+				te_object_release(result);
+				result = NULL;
+
+				if (cond)
+				{
+					start = te_token_begin(p);
+					p = te_token_end(block);
+
+					if (start >= p)
+					{
+						te_set_error(te, "cond: unexpected end of expression");
+					}
+					else
+					{
+						char *combination = te_str_extract(start, p - 1);
+						result = te_eval(te, combination);
+						free(combination);
+					}
+
+					start = te_token_begin(p);
+				}
+				else
+				{
+					p = te_token_begin(te_token_end(block));
+					start = p;
+				}
+			}
+		}
+		else
+		{
+			te_set_error(te, "cond: unexpected conditional expression");
+		}
+	}
+
+	return result;
+}
+
 te_object* eval(tiny_eval *te, const char **exp)
 {
 	te_object *result = NULL;
@@ -762,6 +837,9 @@ te_object* eval(tiny_eval *te, const char **exp)
 		}
 		else if (strcasecmp(field, "cond") == 0)
 		{
+			p = te_token_end(*exp);
+			result = te_conditional(te, *exp, p);
+			*exp = p;
 		}
 		else
 		{
