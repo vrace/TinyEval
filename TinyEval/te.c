@@ -738,15 +738,16 @@ te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
 	te_object *result = NULL;
 
 	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
-	p = te_token_end(start);
+	p = start;
 
-	while (p < end && !te_error(te) && !result)
+	while (p < end - 1 && !te_error(te) && !result)
 	{
 		const char *block = start;
 
 		if (*start == '(')
 		{
-			p = te_token_end(++start);
+			start = te_token_begin(++start);
+			p = te_token_end(start);
 			if (strncasecmp(start, "else", p - start) == 0)
 			{
 				result = te_make_integer(1);
