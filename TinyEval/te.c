@@ -806,6 +806,49 @@ te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
+te_object* te_conditional_if(tiny_eval *te, const char *exp, const char *end)
+{
+	const char *start;
+	const char *p;
+	te_object *result = NULL;
+
+	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
+	p = start;
+
+	result = eval(te, &p);
+
+	if (!te_error(te))
+	{
+		if (te_object_type(result) == TE_TYPE_INTEGER)
+		{
+			long cond = te_to_integer(result);
+			te_object_release(result);
+			result = NULL;
+
+			if (!cond)
+				p = te_token_end(te_token_begin(p));
+
+			p = te_token_begin(p);
+			if (!*p || *p == ')')
+			{
+				te_set_error(te, "if: unexpected end of expression");
+			}
+			else
+			{
+				result = eval(te, &p);
+			}
+		}
+		else
+		{
+			te_object_release(result);
+			result = NULL;
+			te_set_error(te, "if: unexpected conditional result");
+		}
+	}
+
+	return result;
+}
+
 te_object* eval(tiny_eval *te, const char **exp)
 {
 	te_object *result = NULL;
@@ -840,6 +883,12 @@ te_object* eval(tiny_eval *te, const char **exp)
 		{
 			p = te_token_end(*exp);
 			result = te_conditional(te, *exp, p);
+			*exp = p;
+		}
+		else if (strcasecmp(field, "if") == 0)
+		{
+			p = te_token_end(*exp);
+			result = te_conditional_if(te, *exp, p);
 			*exp = p;
 		}
 		else
