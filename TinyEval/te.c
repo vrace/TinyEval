@@ -218,6 +218,83 @@ te_type te_object_type(te_object *object)
 	return object ? object->type : TE_TYPE_NIL;
 }
 
+te_lambda_data* te_lambda_init(tiny_eval *te)
+{
+	te_lambda_data *lambda;
+
+	lambda = malloc(sizeof(te_lambda_data));
+	assert(lambda);
+
+	lambda->binding = NULL;
+	lambda->binding_count = 0;
+	lambda->combination = NULL;
+	lambda->env.link = te->env;
+	lambda->env.symbol = NULL;
+	lambda->env.symbol_cap = 0;
+	lambda->env.symbol_count = 0;
+
+	return lambda;
+}
+
+void te_lambda_release(te_lambda_data *lambda)
+{
+	int i;
+
+	assert(lambda);
+
+	for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
+
+	if (lambda->binding)
+		free(lambda->binding);
+
+	if (lambda->combination)
+		free(lambda->combination);
+
+	for (i = 0; i < lambda->env.symbol_count; i++)
+	{
+		assert(lambda->env.symbol[i].name);
+		free(lambda->env.symbol[i].name);
+		te_object_release(lambda->env.symbol[i].object);
+	}
+
+	if (lambda->env.symbol)
+		free(lambda->env.symbol);
+
+	free(lambda);
+}
+
+void te_lambda_bindings(te_lambda_data *lambda, const char **exp)
+{
+	const char *start;
+	const char *p;
+	int binding_cap = 0;
+
+	assert(exp);
+	assert(*exp);
+	assert(lambda);
+	assert(lambda->binding == NULL);
+
+	start = *exp;
+
+	while (*start && *start != ')')
+	{
+		start = te_token_begin(start);
+		p = te_token_end(start);
+
+		if (lambda->binding_count <= binding_cap)
+		{
+			binding_cap += 8;
+			lambda->binding = realloc(lambda->binding, binding_cap);
+			assert(lambda->binding);
+		}
+
+		lambda->binding[lambda->binding_count++] = te_str_extract(start, p);
+		start = te_token_begin(p);
+	}
+
+	*exp = start;
+}
+
 te_object* te_object_retain(te_object *object)
 {
 	if (object)
@@ -238,28 +315,7 @@ void te_object_release(te_object *object)
 				assert(object->data.procedure);
 
 				if (object->data.procedure->proc == te_lambda_proc)
-				{
-					int i;
-					te_lambda_data *lambda = object->data.procedure->user;
-					
-					assert(lambda);
-
-					for (i = 0; i < lambda->binding_count; free(lambda->binding[i++]));
-					free(lambda->binding);
-					free(lambda->combination);
-
-					for (i = 0; i < lambda->env.symbol_count; i++)
-					{
-						assert(lambda->env.symbol[i].name);
-						free(lambda->env.symbol[i].name);
-						te_object_release(lambda->env.symbol[i].object);
-					}
-
-					if (lambda->env.symbol)
-						free(lambda->env.symbol);
-
-					free(lambda);
-				}
+					te_lambda_release(object->data.procedure->user);
 
 				free(object->data.procedure);
 			}
@@ -651,38 +707,13 @@ te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
 
 		start = te_token_begin(start + 1);
 		p = te_token_end(start);
-
 		symbol = te_str_extract(start, p);
 
-		lambda = malloc(sizeof(te_lambda_data));
-		assert(lambda);
-
-		lambda->binding = NULL;
-		lambda->binding_count = 0;
-		lambda->combination = NULL;
-		lambda->env.link = te->env;
-		lambda->env.symbol = NULL;
-		lambda->env.symbol_cap = 0;
-		lambda->env.symbol_count = 0;
-
 		start = te_token_begin(p);
-		while (*start && *start != ')')
-		{
-			start = te_token_begin(start);
-			p = te_token_end(start);
+		lambda = te_lambda_init(te);
+		te_lambda_bindings(lambda, &start);
 
-			if (lambda->binding_count <= binding_cap)
-			{
-				binding_cap += 8;
-				lambda->binding = realloc(lambda->binding, binding_cap);
-				assert(lambda->binding);
-			}
-			
-			lambda->binding[lambda->binding_count++] = te_str_extract(start, p);
-			start = te_token_begin(p);
-		}
-
-		if (*start == ')')
+		if (start < end && *start == ')')
 		{
 			start = te_token_begin(++start);
 			lambda->combination = te_str_extract(start, end - 1);
@@ -694,13 +725,7 @@ te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
 			te_set_error(te, "define: unexpected end of procedure definition");
 			
 			if (lambda)
-			{
-				if (lambda->binding)
-					free(lambda->binding);
-				if (lambda->combination)
-					free(lambda->combination);
-				free(lambda);
-			}
+				te_lambda_release(lambda);
 		}
 	}
 	else
@@ -749,41 +774,15 @@ te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
 	if (*start == '(' && *(p - 1) == ')')
 	{
 		te_lambda_data *lambda;
-		int binding_cap = 0;
 
-		lambda = malloc(sizeof(te_lambda_data));
-		assert(lambda);
+		start = te_token_begin(++start);
+		lambda = te_lambda_init(te);
+		te_lambda_bindings(lambda, &start);
 
-		lambda->binding = NULL;
-		lambda->binding_count = 0;
-		lambda->combination = NULL;
-		lambda->env.link = te->env;
-		lambda->env.symbol = NULL;
-		lambda->env.symbol_cap = 0;
-		lambda->env.symbol_count = 0;
-
-		start++;
-		while (*start && *start != ')')
-		{
-			start = te_token_begin(start);
-			p = te_token_end(start);
-
-			if (lambda->binding_count <= binding_cap)
-			{
-				binding_cap += 8;
-				lambda->binding = realloc(lambda->binding, binding_cap);
-				assert(lambda->binding);
-			}
-
-			lambda->binding[lambda->binding_count++] = te_str_extract(start, p);
-			start = te_token_begin(p);
-		}
-
-		if (*start == ')')
+		if (start < end && *start == ')')
 		{
 			start = te_token_begin(++start);
 			lambda->combination = te_str_extract(start, end - 1);
-
 			result = te_make_procedure(te_lambda_proc, lambda);
 		}
 		else
@@ -791,13 +790,7 @@ te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
 			te_set_error(te, "lambda: unexpected end of definition");
 
 			if (lambda)
-			{
-				if (lambda->binding)
-					free(lambda->binding);
-				if (lambda->combination)
-					free(lambda->combination);
-				free(lambda);
-			}
+				te_lambda_release(lambda);
 		}
 	}
 	else
@@ -906,7 +899,7 @@ te_object* te_conditional_if(tiny_eval *te, const char *exp, const char *end)
 				p = te_token_end(te_token_begin(p));
 
 			p = te_token_begin(p);
-			if (!*p || *p == ')')
+			if (p >= end || !*p || *p == ')')
 			{
 				te_set_error(te, "if: unexpected end of expression");
 			}
