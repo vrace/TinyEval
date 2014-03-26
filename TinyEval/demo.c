@@ -1,5 +1,5 @@
-//#include <Windows.h>
-//#include "vld.h"
+#include <Windows.h>
+#include "vld.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,31 +9,36 @@
 
 static char expression[] = 
 "\
-(define square-root (lambda (x)                                             \n\
-    (define abs-value (lambda (x) (cond ((< x 0) (- x))                     \n\
-                                  (else x))))                               \n\
-    (define square (lambda (x) (* x x)))                                    \n\
-    (define average (lambda (a b) (/ (+ a b) 2)))                           \n\
-    (define improve (lambda (guess) (average guess (/ x guess))))           \n\
-    (define good-enough (lambda (guess) (< (abs-value (- x (square guess))) 0.0001)))\n\
-    (define try (lambda (guess) (cond ((good-enough guess) guess)           \n\
-                                      (else (try (improve guess))))))       \n\
-    (try 1)))                                                               \n\
+(define square-root (lambda (x)\n\
+    (define (abs-value x) (if (< x 0) (- x) x))\n\
+    (define square (lambda (x) (* x x)))\n\
+    (define average (lambda (a b) (/ (+ a b) 2)))\n\
+    (define improve (lambda (guess) (average guess (/ x guess))))\n\
+    (define (good-enough guess) (< (abs-value (- x (square guess))) 0.0001))\n\
+    (define try (lambda (guess) (cond ((good-enough guess) guess)\n\
+                                      (else (try (improve guess))))))\n\
+    (try 1)))\n\
 (square-root 3)";
+
+//static char expression[] =
+//"(cond ( ( > 7 0 ) \"Hmmm\" ) )";
+
+//static char expression[] =
+//"(define (abs x) (if (< x 0) (- x) x)) (abs 7)";
 
 te_object* equals(tiny_eval *te, void *user, te_object *operands[], int count)
 {
-	return te_make_integer((te_to_number(operands[0]) == te_to_number(operands[1])) ? 1 : 0);
+	return te_make_boolean((te_to_number(operands[0]) == te_to_number(operands[1])) ? 1 : 0);
 }
 
 te_object* lesser(tiny_eval *te, void *user, te_object *operands[], int count)
 {
-	return te_make_integer((te_to_number(operands[0]) < te_to_number(operands[1])) ? 1 : 0);
+	return te_make_boolean((te_to_number(operands[0]) < te_to_number(operands[1])) ? 1 : 0);
 }
 
 te_object* greater(tiny_eval *te, void *user, te_object *operands[], int count)
 {
-	return te_make_integer((te_to_number(operands[0]) > te_to_number(operands[1])) ? 1 : 0);
+	return te_make_boolean((te_to_number(operands[0]) > te_to_number(operands[1])) ? 1 : 0);
 }
 
 te_object* negative(tiny_eval *te, void *user, te_object *operands[], int count)
@@ -150,7 +155,7 @@ int main(void)
 			printf("user data\n");
 			break;
 		case TE_TYPE_INTEGER:
-			printf("%d\n", te_to_integer(result));
+			printf("%ld\n", te_to_integer(result));
 			break;
 		case TE_TYPE_NUMBER:
 			printf("%g\n", te_to_number(result));

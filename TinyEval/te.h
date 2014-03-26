@@ -46,6 +46,7 @@ void te_set_error(tiny_eval *te, const char *str);
 #define TE_TYPE_INTEGER   3
 #define TE_TYPE_NUMBER    4
 #define TE_TYPE_STRING    5
+#define TE_TYPE_BOOLEAN   6
 
 typedef int te_type;
 
@@ -60,12 +61,17 @@ te_object* te_make_procedure(te_procedure proc, void *user);
 te_object* te_make_userdata(void *user);
 te_object* te_make_integer(long value);
 te_object* te_make_number(double number);
+te_object* te_make_str(const char *str);
 te_object* te_make_string(const char *str, const char *end);
+te_object* te_make_boolean(int value);
+te_object* te_make_true();
+te_object* te_make_false();
 
 te_object* te_call(tiny_eval *te, te_object *procedure, te_object *operands[], int count);
 void* te_to_userdata(te_object *object);
 long te_to_integer(te_object *object);
 double te_to_number(te_object *object);
 const char* te_to_string(te_object *object);
+int te_to_boolean(te_object *object);
 
 #endif

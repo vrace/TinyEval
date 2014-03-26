@@ -404,6 +404,11 @@ te_object* te_make_number(double number)
 	return out;
 }
 
+te_object* te_make_str(const char *str)
+{
+	return te_make_string(str, str + strlen(str));
+}
+
 te_object* te_make_string(const char *str, const char *end)
 {
 	size_t length;
@@ -421,6 +426,30 @@ te_object* te_make_string(const char *str, const char *end)
 	out->data.str_value = te_str_extract(str, end);
 
 	return out;
+}
+
+te_object* te_make_boolean(int value)
+{
+	te_object *out;
+
+	out = malloc(sizeof(te_object));
+	assert(out);
+
+	out->ref = 1;
+	out->type = TE_TYPE_BOOLEAN;
+	out->data.int_value = !!value;
+
+	return out;
+}
+
+te_object* te_make_true()
+{
+	return te_make_boolean(1);
+}
+
+te_object* te_make_false()
+{
+	return te_make_boolean(0);
 }
 
 te_object* te_call(tiny_eval *te, te_object *procedure, te_object *operands[], int count)
@@ -502,6 +531,17 @@ const char* te_to_string(te_object *object)
 	return str;
 }
 
+int te_to_boolean(te_object *object)
+{
+	int value = 0;
+	assert(object);
+
+	if (te_object_type(object) == TE_TYPE_BOOLEAN)
+		value = object->data.int_value;
+
+	return value;
+}
+
 tiny_eval* te_init(void)
 {
 	tiny_eval *te;
@@ -515,6 +555,9 @@ tiny_eval* te_init(void)
 	te->global.symbol_cap = 0;
 	te->global.symbol_count = 0;
 	te->env = &te->global;
+
+	te_define(te, "#t", te_make_true());
+	te_define(te, "#f", te_make_false());
 
 	return te;
 }
@@ -689,7 +732,7 @@ te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count
 	return result;
 }
 
-te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
+te_object* te_eval_define(tiny_eval *te, const char *exp, const char *end)
 {
 	const char *start;
 	const char *p;
@@ -762,7 +805,7 @@ te_object* te_define_symbol(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
-te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
+te_object* te_eval_lambda(tiny_eval *te, const char *exp, const char *end)
 {
 	const char *start;
 	const char *p;
@@ -801,7 +844,7 @@ te_object* te_make_lambda(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
-te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
+te_object* te_eval_cond(tiny_eval *te, const char *exp, const char *end)
 {
 	const char *start;
 	const char *p;
@@ -820,7 +863,7 @@ te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
 			p = te_token_end(start);
 			if (strncasecmp(start, "else", p - start) == 0)
 			{
-				result = te_make_integer(1);
+				result = te_make_true();
 				start = p;
 			}
 			else
@@ -832,13 +875,13 @@ te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
 			{
 				te_set_error(te, "cond: can't eval condition");
 			}
+			else if (te_object_type(result) != TE_TYPE_BOOLEAN)
+			{
+				te_set_error(te, "cond: unexpected conditional result");
+			}
 			else if (!te_error(te))
 			{
-				int cond = 0;
-
-				if (te_object_type(result) == TE_TYPE_INTEGER)
-					cond = te_to_integer(result);
-
+				int cond = te_to_boolean(result);
 				te_object_release(result);
 				result = NULL;
 
@@ -866,6 +909,12 @@ te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
 					start = p;
 				}
 			}
+
+			if (te_error(te) && result)
+			{
+				te_object_release(result);
+				result = NULL;
+			}
 		}
 		else
 		{
@@ -876,7 +925,7 @@ te_object* te_conditional(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
-te_object* te_conditional_if(tiny_eval *te, const char *exp, const char *end)
+te_object* te_eval_if(tiny_eval *te, const char *exp, const char *end)
 {
 	const char *start;
 	const char *p;
@@ -889,9 +938,9 @@ te_object* te_conditional_if(tiny_eval *te, const char *exp, const char *end)
 
 	if (!te_error(te))
 	{
-		if (te_object_type(result) == TE_TYPE_INTEGER)
+		if (te_object_type(result) == TE_TYPE_BOOLEAN)
 		{
-			long cond = te_to_integer(result);
+			int cond = te_to_boolean(result);
 			te_object_release(result);
 			result = NULL;
 
@@ -919,6 +968,24 @@ te_object* te_conditional_if(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
+te_object* te_eval_symbol(tiny_eval *te, const char *exp)
+{
+	te_symbol *s;
+	te_object *result = NULL;
+
+	s = te_symbol_find(te, exp);
+	if (!s || !s->object)
+	{
+		te_set_error(te, "eval: unbound symbol");
+	}
+	else
+	{
+		result = te_object_retain(s->object);
+	}
+
+	return result;
+}
+
 te_object* eval(tiny_eval *te, const char **exp)
 {
 	te_object *result = NULL;
@@ -940,25 +1007,25 @@ te_object* eval(tiny_eval *te, const char **exp)
 		if (strcasecmp(field, "define") == 0)
 		{
 			p = te_token_end(*exp);
-			result = te_define_symbol(te, *exp, p);
+			result = te_eval_define(te, *exp, p);
 			*exp = p;
 		}
 		else if (strcasecmp(field, "lambda") == 0)
 		{
 			p = te_token_end(*exp);
-			result = te_make_lambda(te, *exp, p);
+			result = te_eval_lambda(te, *exp, p);
 			*exp = p;
 		}
 		else if (strcasecmp(field, "cond") == 0)
 		{
 			p = te_token_end(*exp);
-			result = te_conditional(te, *exp, p);
+			result = te_eval_cond(te, *exp, p);
 			*exp = p;
 		}
 		else if (strcasecmp(field, "if") == 0)
 		{
 			p = te_token_end(*exp);
-			result = te_conditional_if(te, *exp, p);
+			result = te_eval_if(te, *exp, p);
 			*exp = p;
 		}
 		else
@@ -1027,8 +1094,6 @@ te_object* eval(tiny_eval *te, const char **exp)
 	}
 	else
 	{
-		te_symbol *s;
-
 		*exp = p;
 		p = te_token_end(p);
 
@@ -1046,16 +1111,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				s = te_symbol_find(te, field);
-
-				if (!s || !s->object)
-				{
-					te_set_error(te, "eval: unbound symbol");
-				}
-				else
-				{
-					result = te_object_retain(s->object);
-				}
+				result = te_eval_symbol(te, field);
 			}
 		}
 		else
@@ -1070,16 +1126,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 			}
 			else
 			{
-				s = te_symbol_find(te, field);
-
-				if (!s || !s->object)
-				{
-					te_set_error(te, "eval: unbound symbol");
-				}
-				else
-				{
-					result = te_object_retain(s->object);
-				}
+				result = te_eval_symbol(te, field);
 			}
 		}
 
