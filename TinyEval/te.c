@@ -164,7 +164,7 @@ const char* te_close_string(const char *p)
 	return p;
 }
 
-const char* te_close_bracket(const char *p)
+const char* te_close_brace(const char *p)
 {
 	int count = 1;
 	assert(*p == '(');
@@ -199,7 +199,7 @@ const char* te_token_end(const char *p)
 
 	if (*p == '(')
 	{
-		p = te_close_bracket(p);
+		p = te_close_brace(p);
 	}
 	else if (*p == '"')
 	{
@@ -584,9 +584,26 @@ void te_release(tiny_eval *te)
 	free(te);
 }
 
-te_symbol* te_symbol_find(tiny_eval *te, const char *name)
+te_symbol* te_symbol_env_find(te_environment *env, const char *name)
 {
 	int i;
+	te_symbol *out = NULL;
+
+	for (i = env->symbol_count - 1; i >= 0; i--)
+	{
+		assert(env->symbol[i].name);
+		if (strcasecmp(name, env->symbol[i].name) == 0)
+		{
+			out = &env->symbol[i];
+			break;
+		}
+	}
+
+	return out;
+}
+
+te_symbol* te_symbol_find(tiny_eval *te, const char *name)
+{
 	te_symbol *out;
 	te_environment *env;
 
@@ -598,16 +615,7 @@ te_symbol* te_symbol_find(tiny_eval *te, const char *name)
 
 	while (env && !out)
 	{
-		for (i = env->symbol_count - 1; i >= 0; i--)
-		{
-			assert(env->symbol[i].name);
-			if (strcasecmp(name, env->symbol[i].name) == 0)
-			{
-				out = &env->symbol[i];
-				break;
-			}
-		}
-
+		out = te_symbol_env_find(env, name);
 		env = env->link;
 	}
 
@@ -623,6 +631,32 @@ void te_symbol_init(te_symbol *s, const char *name, te_object *object)
 	s->object = object;
 }
 
+void te_symbol_env_define(te_environment *env, const char *name, te_object *object)
+{
+	te_symbol *symbol;
+
+	assert(env);
+	assert(name);
+	
+	symbol = te_symbol_env_find(env, name);
+	if (symbol)
+	{
+		te_object_release(symbol->object);
+		symbol->object = object;
+	}
+	else
+	{
+		if (env->symbol_count >= env->symbol_cap)
+		{
+			env->symbol_cap += 8;
+			env->symbol = realloc(env->symbol, sizeof(te_symbol) * env->symbol_cap);
+			assert(env->symbol);
+		}
+
+		te_symbol_init(&env->symbol[env->symbol_count++], name, object);
+	}
+}
+
 void te_define(tiny_eval *te, const char *symbol, te_object *object)
 {
 	te_environment *env;
@@ -631,14 +665,7 @@ void te_define(tiny_eval *te, const char *symbol, te_object *object)
 	assert(symbol);
 
 	env = &te->global;
-	if (env->symbol_count >= env->symbol_cap)
-	{
-		env->symbol_cap += 100;
-		env->symbol = realloc(env->symbol, sizeof(te_symbol) * env->symbol_cap);
-		assert(env->symbol);
-	}
-
-	te_symbol_init(&env->symbol[env->symbol_count++], symbol, object);
+	te_symbol_env_define(env, symbol, object);
 }
 
 void te_define_local(tiny_eval *te, const char *symbol, te_object *object)
@@ -650,14 +677,7 @@ void te_define_local(tiny_eval *te, const char *symbol, te_object *object)
 	assert(symbol);
 
 	env = te->env;
-	if (env->symbol_count >= env->symbol_cap)
-	{
-		env->symbol_cap += 100;
-		env->symbol = realloc(env->symbol, sizeof(te_symbol) * env->symbol_cap);
-		assert(env->symbol);
-	}
-
-	te_symbol_init(&env->symbol[env->symbol_count++], symbol, object);
+	te_symbol_env_define(env, symbol, object);
 }
 
 te_object* te_eval(tiny_eval *te, const char *expression)
@@ -968,6 +988,114 @@ te_object* te_eval_if(tiny_eval *te, const char *exp, const char *end)
 	return result;
 }
 
+te_object* te_eval_and(tiny_eval *te, const char *exp, const char *end)
+{
+	const char *start;
+	const char *p;
+	te_object *result = NULL;
+
+	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
+
+	while (!te_error(te) && *start != ')' && start < end)
+	{
+		p = te_token_end(start);
+
+		if (p > end)
+		{
+			te_set_error(te, "and: unexpected end of expression");
+		}
+		else if (!result)
+		{
+			te_object *cond = eval(te, &start);
+
+			if (!te_error(te))
+			{
+				if (te_object_type(cond) == TE_TYPE_BOOLEAN)
+				{
+					if (te_to_boolean(cond) == 0)
+					{
+						result = te_make_false();
+					}
+				}
+				else
+				{
+					te_set_error(te, "and: operand is not a boolean value");
+				}
+			}
+
+			te_object_release(cond);
+		}
+
+		start = te_token_begin(p);
+	}
+
+	if (*start == ')')
+	{
+		if (!result && !te_error(te))
+			result = te_make_true();
+	}
+	else
+	{
+		te_set_error(te, "and: unexpected end of expression");
+	}
+
+	return result;
+}
+
+te_object* te_eval_or(tiny_eval *te, const char *exp, const char *end)
+{
+	const char *start;
+	const char *p;
+	te_object *result = NULL;
+
+	start = te_token_begin(te_token_end(te_token_begin(exp + 1)));
+
+	while (!te_error(te) && *start != ')' && start < end)
+	{
+		p = te_token_end(start);
+
+		if (p > end)
+		{
+			te_set_error(te, "or: unexpected end of expression");
+		}
+		else if (!result)
+		{
+			te_object *cond = eval(te, &start);
+
+			if (!te_error(te))
+			{
+				if (te_object_type(cond) == TE_TYPE_BOOLEAN)
+				{
+					if (te_to_boolean(cond) != 0)
+					{
+						result = te_make_true();
+					}
+				}
+				else
+				{
+					te_set_error(te, "or: operand is not a boolean value");
+				}
+			}
+
+			te_object_release(cond);
+		}
+
+		start = te_token_begin(p);
+	}
+
+	if (*start == ')')
+	{
+		if (!result && !te_error(te))
+			result = te_make_false();
+	}
+	else
+	{
+		te_set_error(te, "or: unexpected end of expression");
+	}
+
+	return result;
+}
+
 te_object* te_eval_symbol(tiny_eval *te, const char *exp)
 {
 	te_symbol *s;
@@ -1026,6 +1154,18 @@ te_object* eval(tiny_eval *te, const char **exp)
 		{
 			p = te_token_end(*exp);
 			result = te_eval_if(te, *exp, p);
+			*exp = p;
+		}
+		else if (strcasecmp(field, "and") == 0)
+		{
+			p = te_token_end(*exp);
+			result = te_eval_and(te, *exp, p);
+			*exp = p;
+		}
+		else if (strcasecmp(field, "or") == 0)
+		{
+			p = te_token_end(*exp);
+			result = te_eval_or(te, *exp, p);
 			*exp = p;
 		}
 		else

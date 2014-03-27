@@ -20,6 +20,8 @@ static char expression[] =
     (try 1)))\n\
 (square-root 3)";
 
+//static char expression[] = "(and #t #f (< 7 9))";
+
 //static char expression[] =
 //"(cond ( ( > 7 0 ) \"Hmmm\" ) )";
 
@@ -162,6 +164,9 @@ int main(void)
 			break;
 		case TE_TYPE_STRING:
 			printf("%s\n", te_to_string(result));
+			break;
+		case TE_TYPE_BOOLEAN:
+			printf("%s\n", te_to_boolean(result) ? "#t" : "#f");
 			break;
 		default:
 			printf("unknown type\n");
