@@ -96,7 +96,8 @@ typedef struct tag_te_lambda_data te_lambda_data;
 
 static te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count);
 static te_object* eval(tiny_eval *te, const char **exp);
-static te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count);
+
+static TE_PROC(te_lambda_proc);
 
 static TE_PROC(te_plus);
 static TE_PROC(te_minus);
@@ -1288,7 +1289,7 @@ te_object* eval(tiny_eval *te, const char **exp)
 	return result;
 }
 
-te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count)
+TE_PROC(te_lambda_proc)
 {
 	int i;
 	te_lambda_data *lambda;

@@ -54,8 +54,10 @@ te_type te_object_type(te_object *object);
 te_object* te_object_retain(te_object *object);
 void te_object_release(te_object *object);
 
-typedef te_object* (*te_procedure)(tiny_eval *te, void *user, te_object *operands[], int count);
-#define TE_PROC(name) te_object* name(tiny_eval *te, void *user, te_object *operands[], int count)
+#define TE_PROC(name) te_object* name\
+	(tiny_eval *te, void *user, te_object *operands[], int count)
+
+typedef TE_PROC((*te_procedure));
 
 te_object* te_make_nil(void);
 te_object* te_make_procedure(te_procedure proc, void *user);
