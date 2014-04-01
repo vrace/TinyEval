@@ -43,97 +43,16 @@ te_object* greater(tiny_eval *te, void *user, te_object *operands[], int count)
 	return te_make_boolean((te_to_number(operands[0]) > te_to_number(operands[1])) ? 1 : 0);
 }
 
-te_object* negative(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	return te_make_number(-te_to_number(operands[0]));
-}
-
-te_object* minus(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	if (count == 1)
-		return negative(te, user, operands, count);
-
-	return te_make_number(te_to_number(operands[0]) - te_to_number(operands[1]));
-}
-
-te_object* divides(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	return te_make_number(te_to_number(operands[0]) / te_to_number(operands[1]));
-}
-
-te_object* plus(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	int i;
-	te_type type;
-	double result = 0;
-
-	for (i = 0; i < count; i++)
-	{
-		assert(operands && operands[i]);
-		type = te_object_type(operands[i]);
-		if (type == TE_TYPE_INTEGER || type == TE_TYPE_NUMBER)
-		{
-			result += te_to_number(operands[i]);
-		}
-		else
-		{
-			te_set_error(te, "plus: unexpected operand type");
-			break;
-		}
-	}
-	
-	return te_error(te) ? NULL : te_make_number(result);
-}
-
-te_object* multiplies(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	double result = 0;
-	int i;
-	te_type type;
-
-	for (i = 0; i < count; i++)
-	{
-		double operand = 0;
-
-		assert(operands && operands[i]);
-		type = te_object_type(operands[i]);
-		if (type == TE_TYPE_INTEGER || type == TE_TYPE_NUMBER)
-		{
-			operand = te_to_number(operands[i]);
-		}
-		else
-		{
-			te_set_error(te, "multiplies: unexpected operand type");
-			break;
-		}
-
-		if (i == 0)
-		{
-			result = operand;
-		}
-		else
-		{
-			result = result * operand;
-		}
-	}
-	
-	return te_error(te) ? NULL : te_make_number(result);
-}
-
 int main(void)
 {
 	tiny_eval *te;
 	te_object *result;
 
 	te = te_init();
-	te_define(te, "+", te_make_procedure(plus, NULL));
-	te_define(te, "*", te_make_procedure(multiplies, NULL));
 	te_define(te, "A", te_make_integer(5));
 	te_define(te, "<", te_make_procedure(lesser, NULL));
 	te_define(te, "=", te_make_procedure(equals, NULL));
 	te_define(te, ">", te_make_procedure(greater, NULL));
-	te_define(te, "-", te_make_procedure(minus, NULL));
-	te_define(te, "/", te_make_procedure(divides, NULL));
 
 	result = te_eval(te, expression);
 

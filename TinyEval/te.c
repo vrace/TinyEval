@@ -98,6 +98,11 @@ static te_object* apply(tiny_eval *te, const char *op, te_object *operands[], in
 static te_object* eval(tiny_eval *te, const char **exp);
 static te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int count);
 
+static TE_PROC(te_plus);
+static TE_PROC(te_minus);
+static TE_PROC(te_multiplies);
+static TE_PROC(te_divides);
+
 char* te_str_extract(const char *begin, const char *end)
 {
 	char *str;
@@ -558,6 +563,10 @@ tiny_eval* te_init(void)
 
 	te_define(te, "#t", te_make_true());
 	te_define(te, "#f", te_make_false());
+	te_define(te, "+", te_make_procedure(te_plus, NULL));
+	te_define(te, "-", te_make_procedure(te_minus, NULL));
+	te_define(te, "*", te_make_procedure(te_multiplies, NULL));
+	te_define(te, "/", te_make_procedure(te_divides, NULL));
 
 	return te;
 }
@@ -1305,6 +1314,151 @@ te_object* te_lambda_proc(tiny_eval *te, void *user, te_object *operands[], int 
 	else
 	{
 		te_set_error(te, "lambda: mismatch operand count");
+	}
+
+	return result;
+}
+
+static double te_extract_number(tiny_eval *te, te_object *object, te_type *type)
+{
+	assert(te);
+	assert(object);
+	assert(type);
+
+	*type = te_object_type(object);
+	
+	if (*type == TE_TYPE_INTEGER)
+	{
+		return te_to_integer(object);
+	}
+	else if (*type == TE_TYPE_NUMBER)
+	{
+		return te_to_number(object);
+	}
+	else
+	{
+		te_set_error(te, "operand is not a number");
+	}
+
+	return 0;
+}
+
+static te_object* te_result_from_number(tiny_eval *te, double value, te_type type)
+{
+	te_object *result = NULL;
+
+	assert(te);
+
+	if (!te_error(te))
+	{
+		if (type == TE_TYPE_INTEGER)
+		{
+			return te_make_integer((long)value);
+		}
+		else if (type == TE_TYPE_NUMBER)
+		{
+			return te_make_number(value);
+		}
+	}
+
+	return result;
+}
+
+TE_PROC(te_plus)
+{
+	double value = 0;
+	te_type result_type = TE_TYPE_INTEGER;
+	int i;
+
+	for (i = 0; i < count && !te_error(te); i++)
+	{
+		te_type operand_type;
+		value += te_extract_number(te, operands[i], &operand_type);
+		if (operand_type == TE_TYPE_NUMBER)
+			result_type = TE_TYPE_NUMBER;
+	}
+
+	return te_result_from_number(te, value, result_type);
+}
+
+TE_PROC(te_minus)
+{
+	te_object *result = NULL;
+	te_type result_type;
+	double value = 0;
+
+	if (count == 1)
+	{
+		value = te_extract_number(te, operands[0], &result_type);
+		result = te_result_from_number(te, -value, result_type);
+	}
+	else if (count > 1)
+	{
+		int i;
+
+		value = te_extract_number(te, operands[0], &result_type);
+
+		for (i = 1; i < count && !te_error(te); i++)
+		{
+			te_type operand_type;
+			value -= te_extract_number(te, operands[i], &operand_type);
+			if (operand_type == TE_TYPE_NUMBER)
+				result_type = TE_TYPE_NUMBER;
+		}
+
+		result = te_result_from_number(te, value, result_type);
+	}
+	else
+	{
+		te_set_error(te, "minus: require at least 1 operand");
+	}
+
+	return result;
+}
+
+TE_PROC(te_multiplies)
+{
+	double value = 1;
+	te_type result_type = TE_TYPE_INTEGER;
+	int i;
+
+	for (i = 0; i < count && !te_error(te); i++)
+	{
+		te_type operand_type;
+		value *= te_extract_number(te, operands[i], &operand_type);
+		if (operand_type == TE_TYPE_NUMBER)
+			result_type = TE_TYPE_NUMBER;
+	}
+
+	return te_result_from_number(te, value, result_type);
+}
+
+TE_PROC(te_divides)
+{
+	te_object *result = NULL;
+	double value = 1;
+	
+	if (count == 1)
+	{
+		te_type operand_type;
+		value /= te_extract_number(te, operands[0], &operand_type);
+		result = te_result_from_number(te, value, TE_TYPE_NUMBER);
+	}
+	else if (count > 1)
+	{
+		int i;
+		te_type operand_type;
+
+		value = te_extract_number(te, operands[0], &operand_type);
+
+		for (i = 1; i < count && !te_error(te); i++)
+			value /= te_extract_number(te, operands[i], &operand_type);
+
+		result = te_result_from_number(te, value, TE_TYPE_NUMBER);
+	}
+	else
+	{
+		te_set_error(te, "divides: require at least 1 operand");
 	}
 
 	return result;
