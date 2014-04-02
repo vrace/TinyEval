@@ -20,29 +20,6 @@ static char expression[] =
     (try 1)))\n\
 (square-root 3)";
 
-//static char expression[] = "(and #t #f (< 7 9))";
-
-//static char expression[] =
-//"(cond ( ( > 7 0 ) \"Hmmm\" ) )";
-
-//static char expression[] =
-//"(define (abs x) (if (< x 0) (- x) x)) (abs 7)";
-
-te_object* equals(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	return te_make_boolean((te_to_number(operands[0]) == te_to_number(operands[1])) ? 1 : 0);
-}
-
-te_object* lesser(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	return te_make_boolean((te_to_number(operands[0]) < te_to_number(operands[1])) ? 1 : 0);
-}
-
-te_object* greater(tiny_eval *te, void *user, te_object *operands[], int count)
-{
-	return te_make_boolean((te_to_number(operands[0]) > te_to_number(operands[1])) ? 1 : 0);
-}
-
 int main(void)
 {
 	tiny_eval *te;
@@ -50,9 +27,6 @@ int main(void)
 
 	te = te_init();
 	te_define(te, "A", te_make_integer(5));
-	te_define(te, "<", te_make_procedure(lesser, NULL));
-	te_define(te, "=", te_make_procedure(equals, NULL));
-	te_define(te, ">", te_make_procedure(greater, NULL));
 
 	result = te_eval(te, expression);
 

@@ -104,6 +104,12 @@ static TE_PROC(te_minus);
 static TE_PROC(te_multiplies);
 static TE_PROC(te_divides);
 
+static TE_PROC(te_equal);
+static TE_PROC(te_lesser);
+static TE_PROC(te_lesser_equal);
+static TE_PROC(te_greater);
+static TE_PROC(te_greater_equal);
+
 char* te_str_extract(const char *begin, const char *end)
 {
 	char *str;
@@ -568,6 +574,11 @@ tiny_eval* te_init(void)
 	te_define(te, "-", te_make_procedure(te_minus, NULL));
 	te_define(te, "*", te_make_procedure(te_multiplies, NULL));
 	te_define(te, "/", te_make_procedure(te_divides, NULL));
+	te_define(te, "=", te_make_procedure(te_equal, NULL));
+	te_define(te, "<", te_make_procedure(te_lesser, NULL));
+	te_define(te, "<=", te_make_procedure(te_lesser_equal, NULL));
+	te_define(te, ">", te_make_procedure(te_greater, NULL));
+	te_define(te, ">=", te_make_procedure(te_greater_equal, NULL));
 
 	return te;
 }
@@ -1464,3 +1475,54 @@ TE_PROC(te_divides)
 
 	return result;
 }
+
+#define TE_COMPARE_PROC(name,op) \
+static TE_PROC(name) \
+{ \
+	te_object *result = NULL; \
+\
+	if (count == 1) \
+	{ \
+		te_type type = te_object_type(operands[0]); \
+		if (type == TE_TYPE_NUMBER || type == TE_TYPE_INTEGER) \
+		{ \
+			result = te_make_true(); \
+		} \
+		else \
+		{ \
+			te_set_error(te, "operand is not a number"); \
+		} \
+	} \
+	else if (count > 1) \
+	{ \
+		int i; \
+		int op_result = 1; \
+\
+		for (i = 1; op_result && i < count && !te_error(te); i++) \
+		{ \
+			te_type type_one, type_two; \
+			double one, two; \
+\
+			one = te_extract_number(te, operands[i - 1], &type_one); \
+			two = te_extract_number(te, operands[i], &type_two); \
+\
+			if (!te_error(te)) \
+				op_result = (one op two); \
+		} \
+\
+		if (!te_error(te)) \
+			result = te_make_boolean(op_result); \
+	} \
+	else \
+	{ \
+		result = te_make_true(); \
+	} \
+\
+	return result; \
+}
+
+TE_COMPARE_PROC(te_equal, ==)
+TE_COMPARE_PROC(te_lesser, <)
+TE_COMPARE_PROC(te_lesser_equal, <=)
+TE_COMPARE_PROC(te_greater, >)
+TE_COMPARE_PROC(te_greater_equal, >=)
