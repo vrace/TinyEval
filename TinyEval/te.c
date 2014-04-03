@@ -103,12 +103,14 @@ static TE_PROC(te_plus);
 static TE_PROC(te_minus);
 static TE_PROC(te_multiplies);
 static TE_PROC(te_divides);
-
+static TE_PROC(te_not);
 static TE_PROC(te_equal);
 static TE_PROC(te_lesser);
 static TE_PROC(te_lesser_equal);
 static TE_PROC(te_greater);
 static TE_PROC(te_greater_equal);
+static TE_PROC(te_display);
+static TE_PROC(te_newline);
 
 char* te_str_extract(const char *begin, const char *end)
 {
@@ -568,6 +570,7 @@ tiny_eval* te_init(void)
 	te->global.symbol_count = 0;
 	te->env = &te->global;
 
+	te_define(te, "#!unspecific", te_make_nil());
 	te_define(te, "#t", te_make_true());
 	te_define(te, "#f", te_make_false());
 	te_define(te, "+", te_make_procedure(te_plus, NULL));
@@ -579,6 +582,9 @@ tiny_eval* te_init(void)
 	te_define(te, "<=", te_make_procedure(te_lesser_equal, NULL));
 	te_define(te, ">", te_make_procedure(te_greater, NULL));
 	te_define(te, ">=", te_make_procedure(te_greater_equal, NULL));
+	te_define(te, "not", te_make_procedure(te_not, NULL));
+	te_define(te, "display", te_make_procedure(te_display, NULL));
+	te_define(te, "newline", te_make_procedure(te_newline, NULL));
 
 	return te;
 }
@@ -800,11 +806,15 @@ te_object* te_eval_define(tiny_eval *te, const char *exp, const char *end)
 		if (start < end && *start == ')')
 		{
 			start = te_token_begin(++start);
-			lambda->combination = te_str_extract(start, end - 1);
-			result = te_make_procedure(te_lambda_proc, lambda);
-			te_define(te, symbol, te_object_retain(result));
+			if (start < end && *start)
+			{
+				lambda->combination = te_str_extract(start, end - 1);
+				result = te_make_procedure(te_lambda_proc, lambda);
+				te_define(te, symbol, te_object_retain(result));
+			}
 		}
-		else
+		
+		if (!lambda->combination)
 		{
 			te_set_error(te, "define: unexpected end of procedure definition");
 			
@@ -1476,6 +1486,28 @@ TE_PROC(te_divides)
 	return result;
 }
 
+static TE_PROC(te_not)
+{
+	te_object *result = NULL;
+
+	if (count == 1)
+	{
+		int value = 0;
+		te_type type = te_object_type(operands[0]);
+		
+		if (type == TE_TYPE_BOOLEAN)
+			value = !te_to_boolean(operands[0]);
+
+		result = te_make_boolean(value);
+	}
+	else
+	{
+		te_set_error(te, "not: requires exactly 1 operand");
+	}
+
+	return result;
+}
+
 #define TE_COMPARE_PROC(name,op) \
 static TE_PROC(name) \
 { \
@@ -1526,3 +1558,61 @@ TE_COMPARE_PROC(te_lesser, <)
 TE_COMPARE_PROC(te_lesser_equal, <=)
 TE_COMPARE_PROC(te_greater, >)
 TE_COMPARE_PROC(te_greater_equal, >=)
+
+static TE_PROC(te_display)
+{
+	if (count == 1)
+	{
+		te_type type = te_object_type(operands[0]);
+
+		switch (type)
+		{
+		case TE_TYPE_NIL:
+			printf("#!unspecific");
+			break;
+
+		case TE_TYPE_PROCEDURE:
+			printf("#[compound-procedure]");
+			break;
+
+		case TE_TYPE_USERDATA:
+			printf("#[user-data]");
+			break;
+
+		case TE_TYPE_INTEGER:
+			printf("%ld", te_to_integer(operands[0]));
+			break;
+
+		case TE_TYPE_NUMBER:
+			printf("%g", te_to_number(operands[0]));
+			break;
+
+		case TE_TYPE_STRING:
+			printf("%s", te_to_string(operands[0]));
+			break;
+
+		case TE_TYPE_BOOLEAN:
+			if (te_to_boolean(operands[0]) == 0)
+				printf("#f");
+			else
+				printf("#t");
+			break;
+
+		default:
+			printf("#!unspecific");
+			break;
+		}
+	}
+	else
+	{
+		te_set_error(te, "display: requires 1 operand");
+	}
+
+	return NULL;
+}
+
+static TE_PROC(te_newline)
+{
+	printf("\n");
+	return NULL;
+}

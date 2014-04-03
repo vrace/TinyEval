@@ -18,7 +18,9 @@ static char expression[] =
     (define try (lambda (guess) (cond ((good-enough guess) guess)\n\
                                       (else (try (improve guess))))))\n\
     (try 1)))\n\
-(square-root 3)";
+(display \"The square-root of 3 is \")\
+(display (square-root 3))\
+(newline)";
 
 int main(void)
 {
@@ -26,46 +28,7 @@ int main(void)
 	te_object *result;
 
 	te = te_init();
-	te_define(te, "A", te_make_integer(5));
-
 	result = te_eval(te, expression);
-
-	if (te_error(te))
-	{
-		printf("Error: %s\n", te_error(te));
-	}
-	else
-	{
-		printf("%s = ", expression);
-
-		switch (te_object_type(result))
-		{
-		case TE_TYPE_NIL:
-			printf("nil value\n");
-			break;
-		case TE_TYPE_PROCEDURE:
-			printf("procedure\n");
-			break;
-		case TE_TYPE_USERDATA:
-			printf("user data\n");
-			break;
-		case TE_TYPE_INTEGER:
-			printf("%ld\n", te_to_integer(result));
-			break;
-		case TE_TYPE_NUMBER:
-			printf("%g\n", te_to_number(result));
-			break;
-		case TE_TYPE_STRING:
-			printf("%s\n", te_to_string(result));
-			break;
-		case TE_TYPE_BOOLEAN:
-			printf("%s\n", te_to_boolean(result) ? "#t" : "#f");
-			break;
-		default:
-			printf("unknown type\n");
-			break;
-		}
-	}
 
 	te_object_release(result);
 	te_release(te);
