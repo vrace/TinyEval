@@ -39,6 +39,8 @@ wane <newsheep@gmail.com>
 #define strncasecmp _strnicmp
 #endif
 
+#define UNUSED(x) (void)(x)
+
 struct tag_te_environment
 {
 	struct tag_te_environment *link;
@@ -793,7 +795,6 @@ te_object* te_eval_define(tiny_eval *te, const char *exp, const char *end)
 	if (*start == '(')
 	{
 		te_lambda_data *lambda;
-		int binding_cap = 0;
 
 		start = te_token_begin(start + 1);
 		p = te_token_end(start);
@@ -1392,6 +1393,8 @@ TE_PROC(te_plus)
 	te_type result_type = TE_TYPE_INTEGER;
 	int i;
 
+	UNUSED(user);
+
 	for (i = 0; i < count && !te_error(te); i++)
 	{
 		te_type operand_type;
@@ -1408,6 +1411,8 @@ TE_PROC(te_minus)
 	te_object *result = NULL;
 	te_type result_type;
 	double value = 0;
+
+	UNUSED(user);
 
 	if (count == 1)
 	{
@@ -1444,6 +1449,8 @@ TE_PROC(te_multiplies)
 	te_type result_type = TE_TYPE_INTEGER;
 	int i;
 
+	UNUSED(user);
+
 	for (i = 0; i < count && !te_error(te); i++)
 	{
 		te_type operand_type;
@@ -1459,6 +1466,8 @@ TE_PROC(te_divides)
 {
 	te_object *result = NULL;
 	double value = 1;
+
+	UNUSED(user);
 	
 	if (count == 1)
 	{
@@ -1490,6 +1499,8 @@ static TE_PROC(te_not)
 {
 	te_object *result = NULL;
 
+	UNUSED(user);
+
 	if (count == 1)
 	{
 		int value = 0;
@@ -1512,6 +1523,8 @@ static TE_PROC(te_not)
 static TE_PROC(name) \
 { \
 	te_object *result = NULL; \
+\
+	UNUSED(user);\
 \
 	if (count == 1) \
 	{ \
@@ -1561,6 +1574,8 @@ TE_COMPARE_PROC(te_greater_equal, >=)
 
 static TE_PROC(te_display)
 {
+	UNUSED(user);
+
 	if (count == 1)
 	{
 		te_type type = te_object_type(operands[0]);
@@ -1613,6 +1628,11 @@ static TE_PROC(te_display)
 
 static TE_PROC(te_newline)
 {
+	UNUSED(te);
+	UNUSED(user);
+	UNUSED(operands);
+	UNUSED(count);
+
 	printf("\n");
 	return NULL;
 }
