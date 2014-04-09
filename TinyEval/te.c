@@ -754,28 +754,47 @@ void te_set_error(tiny_eval *te, const char *str)
 te_object* apply(tiny_eval *te, const char *op, te_object *operands[], int count)
 {
 	te_object *result;
-	te_symbol *s;
  
 	assert(te);
 	assert(op);
 
 	result = NULL;
-	s = te_symbol_find(te, op);
 
-	if (s)
+	if (op[0] == '(')
 	{
-		if (te_object_type(s->object) == TE_TYPE_PROCEDURE)
+		te_object *fun = te_eval(te, op);
+		if (!te_error(te))
 		{
-			result = te_call(te, s->object, operands, count);
+			if (te_object_type(fun) == TE_TYPE_PROCEDURE)
+			{
+				result = te_call(te, fun, operands, count);
+			}
+			else
+			{
+				te_set_error(te, "apply: can't eval operator");
+			}
 		}
-		else
-		{
-			te_set_error(te, "apply: operator is not a procedure");
-		}
+		te_object_release(fun);
 	}
 	else
 	{
-		te_set_error(te, "apply: unbound procedure");
+		te_symbol *s = te_symbol_find(te, op);
+
+		if (s)
+		{
+			if (te_object_type(s->object) == TE_TYPE_PROCEDURE)
+			{
+				result = te_call(te, s->object, operands, count);
+			}
+			else
+			{
+				te_set_error(te, "apply: operator is not a procedure");
+			}
+		}
+		else
+		{
+			te_set_error(te, "apply: unbound procedure");
+		}
 	}
 
 	return result;

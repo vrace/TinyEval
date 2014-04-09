@@ -22,6 +22,8 @@ static char expression[] =
 (display (square-root 3))\
 (newline)";
 
+//static char expression[] = "(display ((lambda (x) (* 2 x)) 5)) (newline)";
+
 int main(void)
 {
 	tiny_eval *te;
